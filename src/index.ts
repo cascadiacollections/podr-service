@@ -9,7 +9,9 @@ type ApiCall = () => Promise<Response>;
 async function handleRequest(apiCall: ApiCall) {
   const init = {
     headers: {
-      "content-type": "application/json;charset=UTF-8",
+      'content-type': 'application/json;charset=UTF-8',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET'
     },
   }
 
@@ -45,7 +47,7 @@ addEventListener('fetch', event => {
     return event.respondWith(response);
   }
 
-  return event.respondWith(new Response("Unsupported", {
+  return event.respondWith(new Response('Unsupported', {
     status: 500,
   }));
 });
