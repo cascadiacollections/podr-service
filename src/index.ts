@@ -1,5 +1,11 @@
-import { ApiCall, rssRequest, searchRequest } from './handlers';
+type ApiCall = () => Promise<Response>;
 
+/**
+ * Invokes API call and returns the response as JSON.
+ * 
+ * @param apiCall API request to call.
+ * @returns JSON response
+ */
 async function handleRequest(apiCall: ApiCall) {
   const init = {
     headers: {
@@ -13,22 +19,33 @@ async function handleRequest(apiCall: ApiCall) {
 }
 
 /**
+ * iTunes search API.
  * 
+ * @param query the query to issue.
+ * @param limit the number of results to return.
+ * @returns the response as JSON
+ */
+ async function searchRequest(query: string | undefined | null, limit: string | undefined | null): Promise<Response> {
+  const SEARCH_URL = `https://itunes.apple.com/search?media=podcast&term=${query}&limit=${limit}`;
+  const response = await fetch(SEARCH_URL);
+
+  return response.json();
+}
+
+/**
+ * Podcast search API endpoint.
  */
 addEventListener('fetch', event => { 
   if (event.request.method === 'GET') {
-    switch (event.request.url) {
-      case 'search':
-        return event.respondWith(handleRequest(searchRequest));
-      case 'rss':
-        return event.respondWith(handleRequest(rssRequest));
-      default:
-        return event.respondWith(new Response("Unsupported method", {
-          status: 500,
-        }));
-    }
+    const { searchParams } = new URL(event.request.url);
+    const query = searchParams.get('q');
+    const limit = searchParams.get('limit');
+    const response = handleRequest(() => searchRequest(query, limit));
+
+    return event.respondWith(response);
   }
-  return event.respondWith(new Response("Unsupported method", {
+
+  return event.respondWith(new Response("Unsupported", {
     status: 500,
   }));
-})
+});
