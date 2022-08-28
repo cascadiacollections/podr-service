@@ -9,7 +9,7 @@ const SEARCH_LIMIT = 15;
  * @returns JSON response
  */
 async function handleRequest(apiCall: ApiCall) {
-  const init = {
+  const init: RequestInit = {
     headers: {
       'content-type': 'application/json;charset=UTF-8',
       'Access-Control-Allow-Origin': '*',
@@ -17,9 +17,9 @@ async function handleRequest(apiCall: ApiCall) {
     },
   }
 
-  const response = await apiCall();
-  const data = JSON.stringify(response)
-  return new Response(data, init);
+  const response: Response = await apiCall();
+
+  return new Response(JSON.stringify(response), init);
 }
 
 /**
@@ -38,7 +38,7 @@ async function handleRequest(apiCall: ApiCall) {
   }
 
   const SEARCH_URL = `https://itunes.apple.com/search?media=podcast&term=${query}&limit=${limit}`;
-  const response = await fetch(SEARCH_URL);
+  const response: Response = await fetch(SEARCH_URL);
 
   return response.json();
 }
@@ -46,7 +46,7 @@ async function handleRequest(apiCall: ApiCall) {
 /**
  * Podcast search API endpoint.
  */
-addEventListener('fetch', event => { 
+addEventListener('fetch', (event: FetchEvent): void => { 
   if (event.request.method === 'GET') {
     const { searchParams } = new URL(event.request.url);
     const query = searchParams.get('q') ?? undefined;
