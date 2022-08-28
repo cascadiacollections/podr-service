@@ -29,7 +29,7 @@ async function handleRequest(apiCall: ApiCall) {
  * @param limit the number of results to return.
  * @returns the response as JSON
  */
- async function searchRequest(query?: string, limit: string = `${SEARCH_LIMIT}`): Promise<Response> {
+ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise<Response> {
   if (!query) {
     return new Response('Empty query', {
       status: 400,
