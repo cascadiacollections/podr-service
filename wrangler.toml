@@ -1,12 +1,4 @@
 name = "podr-service"
-type = "javascript"
-zone_id = ""
-account_id = ""
-route = ""
-workers_dev = true
-compatibility_date = "2021-12-23"
-
-[build]
-command = "npm install && npm run build"
-[build.upload]
-format = "service-worker"
+main = "src/index.ts"
+tsconfig = "./tsconfig.json"
+compatibility_date = "2021-11-12"

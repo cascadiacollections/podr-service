@@ -1,10 +1,10 @@
 {
   "name": "@cascadiacollections/podr-service",
   "version": "1.0.0",
-  "description": "Cloudflare worker TypeScript template",
+  "description": "The RESTful API for https://www.podrapp.com/",
   "main": "dist/worker.js",
   "scripts": {
-    "build": "webpack"
+    "build": "wrangler publish --dry-run --outdir=dist"
   },
   "author": "Kevin T. Coughlin",
   "license": "MIT",
