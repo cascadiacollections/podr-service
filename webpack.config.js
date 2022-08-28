@@ -7,19 +7,15 @@ module.exports = {
     path: path.join(__dirname, 'dist'),
   },
   devtool: 'cheap-module-source-map',
-  mode: 'development',
+  mode: 'production',
   resolve: {
-    extensions: ['.ts', '.tsx', '.js'],
+    extensions: ['.ts'],
   },
   module: {
     rules: [
       {
         test: /\.tsx?$/,
-        loader: 'ts-loader',
-        options: {
-          // transpileOnly is useful to skip typescript checks occasionally:
-          // transpileOnly: true,
-        },
+        loader: 'ts-loader'
       },
     ],
   },

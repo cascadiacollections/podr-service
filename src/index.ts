@@ -1,6 +1,7 @@
 type ApiCall = () => Promise<Response>;
 
 const SEARCH_LIMIT = 15;
+const HOSTNAME = 'https://itunes.apple.com';
 
 /**
  * Invokes API call and returns the response as JSON.
@@ -37,7 +38,9 @@ async function handleRequest(apiCall: ApiCall) {
     });
   }
 
-  const SEARCH_URL = `https://itunes.apple.com/search?media=podcast&term=${query}&limit=${limit}`;
+  const route = 'search';
+  const mediaType = 'podcast';
+  const SEARCH_URL = `${HOSTNAME}/${route}?media=${mediaType}&term=${query}&limit=${limit}`;
   const response: Response = await fetch(SEARCH_URL);
 
   return response.json();
