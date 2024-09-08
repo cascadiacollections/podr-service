@@ -69,7 +69,7 @@ addEventListener('fetch', (event: FetchEvent): void => {
     const query = searchParams.get('q') ?? undefined;
 
     // Reserved search query 'toppodcasts'.
-    if (query === 'toppodcasts') {
+    if (query === RESERVED_PARAM_TOPPODCASTS) {
       const response = handleRequest(() => topRequest());
       return event.respondWith(response);
     }
