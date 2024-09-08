@@ -2,3 +2,6 @@ name = "podr-service"
 main = "src/index.ts"
 tsconfig = "./tsconfig.json"
 compatibility_date = "2021-11-12"
+
+[placement]
+mode = "smart"
