@@ -1,7 +1,8 @@
 type ApiCall = () => Promise<Response>;
 
-const SEARCH_LIMIT = 15;
-const HOSTNAME = 'https://itunes.apple.com';
+const SEARCH_LIMIT: number = 15;
+const HOSTNAME: string = 'https://itunes.apple.com';
+const RESERVED_PARAM_TOPPODCASTS: string = 'toppodcasts';
 
 /**
  * Invokes API call and returns the response as JSON.
@@ -47,12 +48,32 @@ async function handleRequest(apiCall: ApiCall) {
 }
 
 /**
+ * 
+ * @returns 
+ */
+async function topRequest(): Promise<Response> {
+  // Add: genre=1318 to filter by podcast genre.
+  // Add: limit=${limit} if supported.
+  const TOP_PODCASTS_URL: string = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/json`;
+  const response: Response = await fetch(TOP_PODCASTS_URL);
+
+  return response.json();
+}
+
+/**
  * Podcast search API endpoint.
  */
 addEventListener('fetch', (event: FetchEvent): void => { 
   if (event.request.method === 'GET') {
     const { searchParams } = new URL(event.request.url);
     const query = searchParams.get('q') ?? undefined;
+
+    // Reserved search query 'toppodcasts'.
+    if (query === RESERVED_PARAM_TOPPODCASTS) {
+      const response = handleRequest(() => topRequest());
+      return event.respondWith(response);
+    }
+
     const limit = searchParams.get('limit') ?? undefined;
     const response = handleRequest(() => searchRequest(query, limit));
 
