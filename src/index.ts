@@ -51,10 +51,9 @@ async function handleRequest(apiCall: ApiCall) {
  * 
  * @returns 
  */
-async function topRequest(): Promise<Response> {
-  // Add: genre=1318 to filter by podcast genre.
-  // Add: limit=${limit} if supported.
-  const TOP_PODCASTS_URL: string = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/json`;
+async function topRequest(limit = `${SEARCH_LIMIT}`): Promise<Response> {
+  // @todo - Add `genre=1318` sub-path to filter by genre.
+  const TOP_PODCASTS_URL: string = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}/json`;
   const response: Response = await fetch(TOP_PODCASTS_URL);
 
   return response.json();
