@@ -28,8 +28,7 @@ jobs:
   build-self-hosted:
     runs-on: 
       - self-hosted
-      - Default
-    continue-on-error: true
+    continue-on-error: true # Optional
     steps:
     - uses: actions/checkout@v4
 
