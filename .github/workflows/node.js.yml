@@ -24,3 +24,22 @@ jobs:
       run: yarn global add wrangler
 
     - run: yarn build
+
+  build-self-hosted:
+    runs-on: 
+      - self-hosted
+      - Default
+    continue-on-error: true
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Node
+      uses: actions/setup-node@v4
+      with:
+        node-version: latest
+
+    - name: Install global npm package
+      run: yarn global add wrangler
+
+    - run: yarn build
+  
