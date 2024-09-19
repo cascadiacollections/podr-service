@@ -27,6 +27,6 @@
     "webpack-cli": "5.1.4"
   },
   "dependencies": {
-    "wrangler": "^3.78.2"
+    "wrangler": "^3.78.5"
   }
 }
