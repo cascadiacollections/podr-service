@@ -323,10 +323,10 @@
   resolved "https://registry.yarnpkg.com/@cloudflare/workerd-windows-64/-/workerd-windows-64-1.20240909.0.tgz#ae5f91e3f072b2a091f9180406e61f3e4e6a9aa0"
   integrity sha512-/d4BT0kcWFa7Qc0K4K9+cwVQ1qyPNKiO42JZUijlDlco+TYTPkLO3qGEohmwbfMq+BieK7JTMSgjO81ZHpA0HQ==
 
-"@cloudflare/workers-shared@0.5.3":
-  version "0.5.3"
-  resolved "https://registry.yarnpkg.com/@cloudflare/workers-shared/-/workers-shared-0.5.3.tgz#013be52f7934bc9999085b9cbad28c06003f1471"
-  integrity sha512-Yk5Im7zsyKbzd7qi+DrL7ZJR9+bdZwq9BqZWS4muDIWA8MCUeSLsUC+C9u+jdwfPSi5It2AcQG4f0iwZr6jkkQ==
+"@cloudflare/workers-shared@0.5.4":
+  version "0.5.4"
+  resolved "https://registry.yarnpkg.com/@cloudflare/workers-shared/-/workers-shared-0.5.4.tgz#bbf8f03b79a6bc0169ad66a6015ebe579d36753a"
+  integrity sha512-PNL/0TjKRdUHa1kwgVdqUNJVZ9ez4kacsi8omz+gv859EvJmsVuGiMAClY2YfJnC9LVKhKCcjqmFgKNXG9/IXA==
   dependencies:
     mime "^3.0.0"
     zod "^3.22.3"
@@ -2894,10 +2894,10 @@ mimic-fn@^2.1.0:
   resolved "https://registry.yarnpkg.com/mimic-fn/-/mimic-fn-2.1.0.tgz#7ed2c2ccccaf84d3ffcb7a69b57711fc2083401b"
   integrity sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==
 
-miniflare@3.20240909.4:
-  version "3.20240909.4"
-  resolved "https://registry.yarnpkg.com/miniflare/-/miniflare-3.20240909.4.tgz#cf00a41316238116612b9800cc1e4940121b095c"
-  integrity sha512-uiMjmv9vYIMgUn5PovS/2XzvnSgm04GxtoreNb7qiaDdp1YMhPPtnmV+EKOKyPSlVc7fCt/glzqSX9atUBXa2A==
+miniflare@3.20240909.5:
+  version "3.20240909.5"
+  resolved "https://registry.yarnpkg.com/miniflare/-/miniflare-3.20240909.5.tgz#ed744f38e709755a59344f35d7da56b03e173590"
+  integrity sha512-3Am3D9LGDljEKWnylSy6hFg3LFnNCo9DlWqZFcL7QkuIhQwN6Sqz1d6xQCkgft7FVXnykG6VNpz0NrjdW+mBjg==
   dependencies:
     "@cspotcode/source-map-support" "0.8.1"
     acorn "^8.8.0"
@@ -2985,10 +2985,10 @@ npm-run-path@^4.0.1:
   dependencies:
     path-key "^3.0.0"
 
-ohash@^1.1.3:
-  version "1.1.3"
-  resolved "https://registry.yarnpkg.com/ohash/-/ohash-1.1.3.tgz#f12c3c50bfe7271ce3fd1097d42568122ccdcf07"
-  integrity sha512-zuHHiGTYTA1sYJ/wZN+t5HKZaH23i4yI1HMwbuXm24Nid7Dv0KcuRlKoNKS9UNfAVSBlnGLcuQrnOKWOZoEGaw==
+ohash@^1.1.4:
+  version "1.1.4"
+  resolved "https://registry.yarnpkg.com/ohash/-/ohash-1.1.4.tgz#ae8d83014ab81157d2c285abf7792e2995fadd72"
+  integrity sha512-FlDryZAahJmEF3VR3w1KogSEdWX3WhA5GPakFx4J81kEAiHyLMpdLLElS8n8dfNadMgAne/MywcvmogzscVt4g==
 
 once@^1.3.0:
   version "1.4.0"
@@ -3618,13 +3618,13 @@ undici@^5.28.4:
   dependencies:
     "@fastify/busboy" "^2.0.0"
 
-"unenv@npm:unenv-nightly@2.0.0-1726478054.1e87097":
-  version "2.0.0-1726478054.1e87097"
-  resolved "https://registry.yarnpkg.com/unenv-nightly/-/unenv-nightly-2.0.0-1726478054.1e87097.tgz#3dd65753f4a8d717be56f02ecbac9bdbfa8243eb"
-  integrity sha512-uZso8dCkGlJzWQqkyjOA5L4aUqNJl9E9oKRm03V/d+URrg6rFMJwBonlX9AAq538NxwJpPnCX0gAz0IfTxsbFQ==
+"unenv@npm:unenv-nightly@2.0.0-20240919-125358-9a64854":
+  version "2.0.0-20240919-125358-9a64854"
+  resolved "https://registry.yarnpkg.com/unenv-nightly/-/unenv-nightly-2.0.0-20240919-125358-9a64854.tgz#13f6812c7b12b9521ea05c6d49259d136e093acd"
+  integrity sha512-XjsgUTrTHR7iw+k/SRTNjh6EQgwpC9voygnoCJo5kh4hKqsSDHUW84MhL9EsHTNfLctvVBHaSw8e2k3R2fKXsQ==
   dependencies:
     defu "^6.1.4"
-    ohash "^1.1.3"
+    ohash "^1.1.4"
     pathe "^1.1.2"
     ufo "^1.5.4"
 
@@ -3774,27 +3774,27 @@ workerd@1.20240909.0:
     "@cloudflare/workerd-linux-arm64" "1.20240909.0"
     "@cloudflare/workerd-windows-64" "1.20240909.0"
 
-wrangler@^3.78.6:
-  version "3.78.6"
-  resolved "https://registry.yarnpkg.com/wrangler/-/wrangler-3.78.6.tgz#32402c30ae8d837aa17da158ca7c1ab7999dcc99"
-  integrity sha512-1PaN9FB2D5sTlse15adhMIhm33rCJYCPxeN71h/6siW45F0QjDrv+BxInwy9LBg8gfEqm71eI1iIlTGyV3l+1A==
+wrangler@^3.78.8:
+  version "3.78.8"
+  resolved "https://registry.yarnpkg.com/wrangler/-/wrangler-3.78.8.tgz#f232df9246d283b585c875379ad5165380cd8307"
+  integrity sha512-tnJ++KY0EeQKa7Pm5Zxl1Cnf1QcmlLit2CohCpTEFHSgCzwzwViuxFL8JQvVKj8Qb65ouBNbfPZnlqrEyGpbew==
   dependencies:
     "@cloudflare/kv-asset-handler" "0.3.4"
-    "@cloudflare/workers-shared" "0.5.3"
+    "@cloudflare/workers-shared" "0.5.4"
     "@esbuild-plugins/node-globals-polyfill" "^0.2.3"
     "@esbuild-plugins/node-modules-polyfill" "^0.2.2"
     blake3-wasm "^2.1.5"
     chokidar "^3.5.3"
     date-fns "^3.6.0"
     esbuild "0.17.19"
-    miniflare "3.20240909.4"
+    miniflare "3.20240909.5"
     nanoid "^3.3.3"
     path-to-regexp "^6.3.0"
     resolve "^1.22.8"
     resolve.exports "^2.0.2"
     selfsigned "^2.0.1"
     source-map "^0.6.1"
-    unenv "npm:unenv-nightly@2.0.0-1726478054.1e87097"
+    unenv "npm:unenv-nightly@2.0.0-20240919-125358-9a64854"
     workerd "1.20240909.0"
     xxhash-wasm "^1.0.1"
   optionalDependencies:
