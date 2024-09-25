@@ -1603,11 +1603,6 @@ data-uri-to-buffer@^2.0.0:
   resolved "https://registry.yarnpkg.com/data-uri-to-buffer/-/data-uri-to-buffer-2.0.2.tgz#d296973d5a4897a5dbe31716d118211921f04770"
   integrity sha512-ND9qDTLc6diwj+Xe5cdAgVTbLVdXbtxTJRXRhli8Mowuaan+0EJOtdqJ0QCHNSSPyoXGx9HX2/VMnKeC34AChA==
 
-date-fns@^3.6.0:
-  version "3.6.0"
-  resolved "https://registry.yarnpkg.com/date-fns/-/date-fns-3.6.0.tgz#f20ca4fe94f8b754951b24240676e8618c0206bf"
-  integrity sha512-fRHTG8g/Gif+kSh50gaGEdToemgfj74aRX3swtiouboip5JDLAyDE9F11nHMIcvOaXeOC6D7SpNhi7uFyB7Uww==
-
 debug@^4.1.0, debug@^4.1.1, debug@^4.3.1, debug@^4.3.2, debug@^4.3.4:
   version "4.3.7"
   resolved "https://registry.yarnpkg.com/debug/-/debug-4.3.7.tgz#87945b4151a011d76d95a198d7111c865c360a52"
@@ -3782,10 +3777,10 @@ workerd@1.20240909.0:
     "@cloudflare/workerd-linux-arm64" "1.20240909.0"
     "@cloudflare/workerd-windows-64" "1.20240909.0"
 
-wrangler@^3.78.8:
-  version "3.78.8"
-  resolved "https://registry.yarnpkg.com/wrangler/-/wrangler-3.78.8.tgz#f232df9246d283b585c875379ad5165380cd8307"
-  integrity sha512-tnJ++KY0EeQKa7Pm5Zxl1Cnf1QcmlLit2CohCpTEFHSgCzwzwViuxFL8JQvVKj8Qb65ouBNbfPZnlqrEyGpbew==
+wrangler@^3.78.9:
+  version "3.78.9"
+  resolved "https://registry.yarnpkg.com/wrangler/-/wrangler-3.78.9.tgz#ff10d9ae37778c32d0cb5a0e7f47e0ff2dd4d97e"
+  integrity sha512-4Z+KBai+xVU59EN8eyDyRXh+f0om3zKwIf2x9YZa9NCuw3bLF77n7wSoghjInTTYfPrKhsZqkPwlcDfVt/yK7g==
   dependencies:
     "@cloudflare/kv-asset-handler" "0.3.4"
     "@cloudflare/workers-shared" "0.5.4"
@@ -3793,7 +3788,6 @@ wrangler@^3.78.8:
     "@esbuild-plugins/node-modules-polyfill" "^0.2.2"
     blake3-wasm "^2.1.5"
     chokidar "^3.5.3"
-    date-fns "^3.6.0"
     esbuild "0.17.19"
     miniflare "3.20240909.5"
     nanoid "^3.3.3"
