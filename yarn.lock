@@ -2909,10 +2909,10 @@ mimic-fn@^2.1.0:
   resolved "https://registry.yarnpkg.com/mimic-fn/-/mimic-fn-2.1.0.tgz#7ed2c2ccccaf84d3ffcb7a69b57711fc2083401b"
   integrity sha512-OqbOk5oEQeAZ8WXWydlu9HJjz9WVdEIvamMCcXmuqUYjTknH/sqsWvhQ3vgwKFRR1HpjvNBKQ37nbJgYzGqGcg==
 
-miniflare@3.20241106.0:
-  version "3.20241106.0"
-  resolved "https://registry.yarnpkg.com/miniflare/-/miniflare-3.20241106.0.tgz#d69854e7267862468dfc057c23ca57bf7801e89d"
-  integrity sha512-PjOoJKjUUofCueQskfhXlGvvHxZj36UAJAp1DnquMK88MFF50zCULblh0KXMSNM+bXeQYA94Gj06a7kfmBGxPw==
+miniflare@3.20241106.1:
+  version "3.20241106.1"
+  resolved "https://registry.yarnpkg.com/miniflare/-/miniflare-3.20241106.1.tgz#2dea3b9bc789b35dde6694948385f3009057f9cd"
+  integrity sha512-dM3RBlJE8rUFxnqlPCaFCq0E7qQqEQvKbYX7W/APGCK+rLcyLmEBzC4GQR/niXdNM/oV6gdg9AA50ghnn2ALuw==
   dependencies:
     "@cspotcode/source-map-support" "0.8.1"
     acorn "^8.8.0"
@@ -3636,10 +3636,10 @@ undici@^5.28.4:
   dependencies:
     "@fastify/busboy" "^2.0.0"
 
-"unenv@npm:unenv-nightly@2.0.0-20241024-111401-d4156ac":
-  version "2.0.0-20241024-111401-d4156ac"
-  resolved "https://registry.yarnpkg.com/unenv-nightly/-/unenv-nightly-2.0.0-20241024-111401-d4156ac.tgz#000835e7383ace38ad31351dc13e623d20b82855"
-  integrity sha512-xJO1hfY+Te+/XnfCYrCbFbRcgu6XEODND1s5wnVbaBCkuQX7JXF7fHEXPrukFE2j8EOH848P8QN19VO47XN8hw==
+"unenv@npm:unenv-nightly@2.0.0-20241111-080453-894aa31":
+  version "2.0.0-20241111-080453-894aa31"
+  resolved "https://registry.yarnpkg.com/unenv-nightly/-/unenv-nightly-2.0.0-20241111-080453-894aa31.tgz#a781d32583a6335a7c76bda694669aed373a61d8"
+  integrity sha512-0W39QQOQ9VE8kVVUpGwEG+pZcsCXk5wqNG6rDPE6Gr+fiA69LR0qERM61hW5KCOkC1/ArCFrfCGjwHyyv/bI0Q==
   dependencies:
     defu "^6.1.4"
     ohash "^1.1.4"
@@ -3792,10 +3792,10 @@ workerd@1.20241106.1:
     "@cloudflare/workerd-linux-arm64" "1.20241106.1"
     "@cloudflare/workerd-windows-64" "1.20241106.1"
 
-wrangler@^3.87.0:
-  version "3.87.0"
-  resolved "https://registry.yarnpkg.com/wrangler/-/wrangler-3.87.0.tgz#3dbd47583f6ba74adf6b622fa61f24a345558ee9"
-  integrity sha512-BExktnSLeGgG+uxgnr4h9eZ5nefdpTVcTHR+gEIWRvqk07XL04nJwpPYAOIPKPpB7E2tMdDJgNLGQN/CY6e1xQ==
+wrangler@^3.89.0:
+  version "3.89.0"
+  resolved "https://registry.yarnpkg.com/wrangler/-/wrangler-3.89.0.tgz#d4a66d98545902b1c1e6fa8fa02efd10657f010d"
+  integrity sha512-ix3Rir/cu9Cn6FklvPDIW1QwOMcRU8iPj3IrkBWGdB66K9z1uqyqoTP64UZZyXrBItfrU7SbQT4L5wJ5y10TPA==
   dependencies:
     "@cloudflare/kv-asset-handler" "0.3.4"
     "@cloudflare/workers-shared" "0.7.1"
@@ -3806,14 +3806,14 @@ wrangler@^3.87.0:
     date-fns "^4.1.0"
     esbuild "0.17.19"
     itty-time "^1.0.6"
-    miniflare "3.20241106.0"
+    miniflare "3.20241106.1"
     nanoid "^3.3.3"
     path-to-regexp "^6.3.0"
     resolve "^1.22.8"
     resolve.exports "^2.0.2"
     selfsigned "^2.0.1"
     source-map "^0.6.1"
-    unenv "npm:unenv-nightly@2.0.0-20241024-111401-d4156ac"
+    unenv "npm:unenv-nightly@2.0.0-20241111-080453-894aa31"
     workerd "1.20241106.1"
     xxhash-wasm "^1.0.1"
   optionalDependencies:
