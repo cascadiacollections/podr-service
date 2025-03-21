@@ -5,11 +5,19 @@ updates:
     schedule:
       interval: "daily"
     assignees:
-      - "kevintcoughlin"
+      - "KevinTCoughlin"
+    labels:
+      - "dependencies"
+      - "npm"
+    auto-merge: true
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "daily"
     assignees:
-      - "kevintcoughlin"
+      - "KevinTCoughlin"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    auto-merge: true
