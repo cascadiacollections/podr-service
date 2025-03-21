@@ -9,11 +9,11 @@
   "author": "Kevin T. Coughlin",
   "license": "MIT",
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20250313.0",
+    "@cloudflare/workers-types": "4.20250319.0",
     "@types/jest": "29.5.14",
     "@types/service-worker-mock": "2.0.4",
     "@typescript-eslint/eslint-plugin": "8.27.0",
-    "@typescript-eslint/parser": "8.26.1",
+    "@typescript-eslint/parser": "8.27.0",
     "eslint": "9.22.0",
     "eslint-config-prettier": "10.1.1",
     "eslint-config-typescript": "3.0.0",
@@ -27,6 +27,6 @@
     "webpack-cli": "6.0.1"
   },
   "dependencies": {
-    "wrangler": "^4.0.0"
+    "wrangler": "^4.2.0"
   }
 }
