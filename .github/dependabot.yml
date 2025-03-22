@@ -16,9 +16,6 @@ updates:
       prefix: "chore(deps)"
       include: "scope"
     open-pull-requests-limit: 10
-    automerged_updates:
-      enable: true
-      merge-method: "squash"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -36,6 +33,3 @@ updates:
       prefix: "chore(deps)"
       include: "scope"
     open-pull-requests-limit: 10
-    automerged_updates:
-      enable: true
-      merge-method: "squash"
