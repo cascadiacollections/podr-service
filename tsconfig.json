@@ -9,12 +9,7 @@
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "isolatedModules": true,
-    "types": [
-      "@cloudflare/workers-types",
-      "@types/service-worker-mock",
-      "jest",
-      "node"
-    ]
+    "types": ["@cloudflare/workers-types", "@types/service-worker-mock", "jest", "node"]
   },
   "include": ["src", "__tests__"],
   "exclude": ["node_modules", "dist"]

@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --outdir=dist",
-    "lint": "eslint .",
-    "lint:fix": "eslint . --fix",
+    "lint": "eslint --ext .ts ./src ./__tests__",
+    "lint:fix": "eslint --ext .ts ./src ./__tests__ --fix",
     "format": "prettier --write \"**/*.{js,ts,json,md}\"",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --passWithNoTests",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",

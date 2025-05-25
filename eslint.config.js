@@ -18,7 +18,7 @@ export default tseslint.config(
     files: ['**/*.ts', '**/*.js'],
     plugins: {
       '@typescript-eslint': tseslint.plugin,
-      'prettier': eslintPluginPrettier,
+      prettier: eslintPluginPrettier,
     },
     rules: {
       'prettier/prettier': 'error',
@@ -34,5 +34,5 @@ export default tseslint.config(
     },
     ignores: ['node_modules/**', 'dist/**'],
   },
-  prettier,
+  prettier
 );
