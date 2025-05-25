@@ -3,15 +3,19 @@
     "outDir": "./dist",
     "module": "NodeNext",
     "target": "esnext",
-    "lib": ["esnext"],
+    "lib": ["esnext", "dom"],
     "alwaysStrict": true,
     "strict": true,
-    "moduleResolution": "node",
+    "moduleResolution": "nodenext",
+    "esModuleInterop": true,
+    "isolatedModules": true,
     "types": [
       "@cloudflare/workers-types",
-      "@types/service-worker-mock"
+      "@types/service-worker-mock",
+      "jest",
+      "node"
     ]
   },
-  "include": ["src"],
+  "include": ["src", "__tests__"],
   "exclude": ["node_modules", "dist"]
 }
