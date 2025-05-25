@@ -9,42 +9,42 @@ const HOSTNAME: string = 'https://itunes.apple.com';
 const RESERVED_PARAM_TOPPODCASTS: string = 'toppodcasts';
 // @todo - use Set?
 const ITUNES_API_GENRES: IGenresDictionary = {
-  1301: "Arts",
-  1302: "Comedy",
-  1303: "Education",
-  1304: "Kids & Family",
-  1305: "Health & Fitness",
-  1306: "TV & Film",
-  1307: "Music",
-  1308: "News",
-  1309: "Religion & Spirituality",
-  1310: "Science",
-  1311: "Sports",
-  1312: "Technology",
-  1313: "Business",
-  1314: "Society & Culture",
-  1315: "Government",
-  1321: "Fiction",
-  1323: "History",
-  1324: "True Crime",
-  1325: "Leisure",
-  1326: "Documentary"
+  1301: 'Arts',
+  1302: 'Comedy',
+  1303: 'Education',
+  1304: 'Kids·&·Family',
+  1305: 'Health·&·Fitness',
+  1306: 'TV·&·Film',
+  1307: 'Music',
+  1308: 'News',
+  1309: 'Religion·&·Spirituality',
+  1310: 'Science',
+  1311: 'Sports',
+  1312: 'Technology',
+  1313: 'Business',
+  1314: 'Society·&·Culture',
+  1315: 'Government',
+  1321: 'Fiction',
+  1323: 'History',
+  1324: 'True·Crime',
+  1325: 'Leisure',
+  1326: 'Documentary',
 };
 
 /**
  * Invokes API call and returns the response as JSON.
- * 
+ *
  * @param apiCall API request to call.
  * @returns JSON response
  */
-async function handleRequest(apiCall: ApiCall) {
+async function handleRequest(apiCall: ApiCall): Promise<Response> {
   const init: RequestInit = {
     headers: {
       'content-type': 'application/json;charset=UTF-8',
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET'
+      'Access-Control-Allow-Methods': 'GET',
     },
-  }
+  };
 
   const response: Response = await apiCall();
 
@@ -53,16 +53,16 @@ async function handleRequest(apiCall: ApiCall) {
 
 /**
  * iTunes search API.
- * 
+ *
  * @param query the query to issue.
  * @param limit the number of results to return.
  * @returns the response as JSON
  */
- async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise<Response> {
+async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise<Response> {
   if (!query) {
     return new Response('Empty query', {
       status: 400,
-      statusText: 'Bad Request'
+      statusText: 'Bad Request',
     });
   }
 
@@ -75,8 +75,8 @@ async function handleRequest(apiCall: ApiCall) {
 }
 
 /**
- * 
- * @returns 
+ *
+ * @returns
  */
 async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promise<Response> {
   const genreLookupValue: number | undefined = ITUNES_API_GENRES[genre] ? genre : undefined;
@@ -90,7 +90,7 @@ async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promis
 /**
  * Podcast search API endpoint.
  */
-addEventListener('fetch', (event: FetchEvent): void => { 
+addEventListener('fetch', (event: FetchEvent): void => {
   if (event.request.method === 'GET') {
     const { searchParams } = new URL(event.request.url);
     const query = searchParams.get('q') ?? undefined;
@@ -108,7 +108,9 @@ addEventListener('fetch', (event: FetchEvent): void => {
     return event.respondWith(response);
   }
 
-  return event.respondWith(new Response('Unsupported', {
-    status: 500,
-  }));
+  return event.respondWith(
+    new Response('Unsupported', {
+      status: 500,
+    })
+  );
 });
