@@ -7,8 +7,6 @@ updates:
       time: "03:00"
     assignees:
       - "KevinTCoughlin"
-    reviewers:
-      - "KevinTCoughlin"
     labels:
       - "dependencies"
       - "npm"
@@ -23,8 +21,6 @@ updates:
       interval: "daily"
       time: "03:00"
     assignees:
-      - "KevinTCoughlin"
-    reviewers:
       - "KevinTCoughlin"
     labels:
       - "dependencies"
