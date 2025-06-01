@@ -5,7 +5,10 @@ updates:
     schedule:
       interval: "daily"
       time: "03:00"
+      timezone: "America/Los_Angeles"
     assignees:
+      - "KevinTCoughlin"
+    reviewers:
       - "KevinTCoughlin"
     labels:
       - "dependencies"
@@ -14,13 +17,36 @@ updates:
       prefix: "chore(deps)"
       include: "scope"
     open-pull-requests-limit: 10
+    versioning-strategy: increase
+    groups:
+      dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "@typescript-eslint/*"
+          - "eslint*"
+          - "prettier"
+          - "jest"
+          - "ts-*"
+          - "typescript"
+          - "webpack*"
+        update-types:
+          - "minor"
+          - "patch"
+      production-dependencies:
+        patterns:
+          - "wrangler"
+          - "@cloudflare/*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "monday"
       time: "03:00"
+      timezone: "America/Los_Angeles"
     assignees:
+      - "KevinTCoughlin"
+    reviewers:
       - "KevinTCoughlin"
     labels:
       - "dependencies"
@@ -28,4 +54,4 @@ updates:
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
