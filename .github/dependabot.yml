@@ -8,8 +8,6 @@ updates:
       timezone: "America/Los_Angeles"
     assignees:
       - "KevinTCoughlin"
-    reviewers:
-      - "KevinTCoughlin"
     labels:
       - "dependencies"
       - "npm"
@@ -45,8 +43,6 @@ updates:
       time: "03:00"
       timezone: "America/Los_Angeles"
     assignees:
-      - "KevinTCoughlin"
-    reviewers:
       - "KevinTCoughlin"
     labels:
       - "dependencies"
