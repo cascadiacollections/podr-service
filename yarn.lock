@@ -467,10 +467,10 @@
   resolved "https://registry.yarnpkg.com/@cloudflare/workerd-windows-64/-/workerd-windows-64-1.20250709.0.tgz#9df9c475cc483a0a395b19a471fcc1c167380fb8"
   integrity sha512-j1AyO8V/62Q23EJplWgzBlRCqo/diXgox58AbDqSqgyzCBAlvUzXQRDBab/FPNG/erRqt7I1zQhahrBhrM0uLA==
 
-"@cloudflare/workers-types@4.20250710.0":
-  version "4.20250710.0"
-  resolved "https://registry.yarnpkg.com/@cloudflare/workers-types/-/workers-types-4.20250710.0.tgz#8df49e51170e5f1b447f4e107ea113ec89f77484"
-  integrity sha512-o055XFgW/ZinLnxDDlm4Q4b2yEmP2x5kekOka/E86blax/RGXj51mBQV/Co3VNog1CePzOA9S/CEOthoIirWRA==
+"@cloudflare/workers-types@4.20250711.0":
+  version "4.20250711.0"
+  resolved "https://registry.yarnpkg.com/@cloudflare/workers-types/-/workers-types-4.20250711.0.tgz#897d52d8a61cdf291bf253735073930cfb3db48b"
+  integrity sha512-aocBpm0Mbbz6GIOLJDbPrl4gZZ2o2A1a7pjFWlt3j2T1xghP0h1V3LtWUhyk74bAY5qOEuGQyLgr+svY//yCrQ==
 
 "@cspotcode/source-map-support@0.8.1":
   version "0.8.1"
@@ -4546,10 +4546,10 @@ workerd@1.20250709.0:
     "@cloudflare/workerd-linux-arm64" "1.20250709.0"
     "@cloudflare/workerd-windows-64" "1.20250709.0"
 
-wrangler@^4.24.1:
-  version "4.24.1"
-  resolved "https://registry.yarnpkg.com/wrangler/-/wrangler-4.24.1.tgz#13b32d4f221754f6793fd278fb702498233de29a"
-  integrity sha512-n7d5BQyOQU7WyEYMC3zNarWzsqWttsusP6qWz4rbbydmnWKSP1wLtsv0yKiyz/LYFumpolz48d5phHp04nR6uw==
+wrangler@^4.24.3:
+  version "4.24.3"
+  resolved "https://registry.yarnpkg.com/wrangler/-/wrangler-4.24.3.tgz#9436aab679780eddc65ecb22b4a9069755ee5da0"
+  integrity sha512-stB1Wfs5NKlspsAzz8SBujBKsDqT5lpCyrL+vSUMy3uueEtI1A5qyORbKoJhIguEbwHfWS39mBsxzm6Vm1J2cg==
   dependencies:
     "@cloudflare/kv-asset-handler" "0.4.0"
     "@cloudflare/unenv-preset" "2.3.3"
