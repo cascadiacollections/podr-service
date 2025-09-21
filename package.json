@@ -18,7 +18,7 @@
   "author": "Kevin T. Coughlin",
   "license": "MIT",
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20250906.0",
+    "@cloudflare/workers-types": "4.20250913.0",
     "@eslint/js": "^9.32.0",
     "@types/jest": "30.0.0",
     "@types/service-worker-mock": "2.0.4",
@@ -38,6 +38,6 @@
     "webpack-cli": "6.0.1"
   },
   "dependencies": {
-    "wrangler": "^4.34.0"
+    "wrangler": "^4.37.0"
   }
 }
