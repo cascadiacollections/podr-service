@@ -7,7 +7,7 @@ interface IGenresDictionary {
 const SEARCH_LIMIT: number = 15;
 const HOSTNAME: string = 'https://itunes.apple.com';
 const RESERVED_PARAM_TOPPODCASTS: string = 'toppodcasts';
-// @todo - use Set?
+
 const ITUNES_API_GENRES: IGenresDictionary = {
   1301: 'Arts',
   1302: 'Comedy',
@@ -38,7 +38,7 @@ const ITUNES_API_GENRES: IGenresDictionary = {
  * @returns JSON response
  */
 async function handleRequest(apiCall: ApiCall): Promise<Response> {
-  const init: RequestInit = {
+  const init: ResponseInit = {
     headers: {
       'content-type': 'application/json;charset=UTF-8',
       'Access-Control-Allow-Origin': '*',
@@ -75,12 +75,14 @@ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise
 }
 
 /**
+ * iTunes top podcasts API.
  *
- * @returns
+ * @param limit the number of results to return.
+ * @param genre the genre filter to apply.
+ * @returns the response as JSON
  */
 async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promise<Response> {
   const genreLookupValue: number | undefined = ITUNES_API_GENRES[genre] ? genre : undefined;
-  // @todo - Use URLSearchParams and stringify.
   const TOP_PODCASTS_URL: string = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}/genre=${genreLookupValue}/json`;
   const response: Response = await fetch(TOP_PODCASTS_URL);
 
@@ -88,29 +90,28 @@ async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promis
 }
 
 /**
- * Podcast search API endpoint.
+ * Modern Module Worker export with fetch handler.
+ * Handles podcast search and discovery requests.
  */
-addEventListener('fetch', (event: FetchEvent): void => {
-  if (event.request.method === 'GET') {
-    const { searchParams } = new URL(event.request.url);
+export default {
+  async fetch(request: Request): Promise<Response> {
+    if (request.method !== 'GET') {
+      return new Response('Unsupported', {
+        status: 405,
+        statusText: 'Method Not Allowed',
+      });
+    }
+
+    const { searchParams } = new URL(request.url);
     const query = searchParams.get('q') ?? undefined;
     const limit = searchParams.get('limit') ?? undefined;
-    const genre = parseInt(searchParams.get('genre') ?? '-1', 10); // @todo - improve default.
+    const genre = parseInt(searchParams.get('genre') ?? '-1', 10);
 
     // Reserved search query terms.
     if (query === RESERVED_PARAM_TOPPODCASTS) {
-      const response = handleRequest(() => topRequest(limit, genre));
-      return event.respondWith(response);
+      return handleRequest(() => topRequest(limit, genre));
     }
 
-    const response = handleRequest(() => searchRequest(query, limit));
-
-    return event.respondWith(response);
-  }
-
-  return event.respondWith(
-    new Response('Unsupported', {
-      status: 500,
-    })
-  );
-});
+    return handleRequest(() => searchRequest(query, limit));
+  },
+};

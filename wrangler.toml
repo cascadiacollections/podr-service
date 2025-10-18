@@ -2,7 +2,7 @@ name = "podr-service"
 main = "src/index.ts"
 tsconfig = "./tsconfig.json"
 
-compatibility_date = "2024-09-08"
+compatibility_date = "2024-10-01"
 compatibility_flags = [ "nodejs_compat", "nodejs_als" ]
 
 [placement]

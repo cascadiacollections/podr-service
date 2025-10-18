@@ -1,5 +1,7 @@
 {
   "recommendations": [
+    "github.copilot",
+    "github.copilot-chat",
     "dbaeumer.vscode-eslint",
     "esbenp.prettier-vscode",
     "ms-vscode.vscode-typescript-next",
