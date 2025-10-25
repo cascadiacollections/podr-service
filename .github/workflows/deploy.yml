@@ -17,8 +17,6 @@ jobs:
   deploy:
     name: Deploy Worker
     runs-on: ubuntu-latest
-    # Only deploy after CI checks pass
-    needs: []
     steps:
     - name: Checkout code
       uses: actions/checkout@v5
