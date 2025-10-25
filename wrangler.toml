@@ -2,8 +2,14 @@ name = "podr-service"
 main = "src/index.ts"
 tsconfig = "./tsconfig.json"
 
-compatibility_date = "2024-10-01"
+# Modern Wrangler 4 configuration
+compatibility_date = "2025-01-01"
 compatibility_flags = [ "nodejs_compat", "nodejs_als" ]
 
+# Workers AI/placement optimization
 [placement]
 mode = "smart"
+
+# Observability settings
+[observability]
+enabled = true
