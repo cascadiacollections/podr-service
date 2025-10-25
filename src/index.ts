@@ -8,6 +8,10 @@ const SEARCH_LIMIT: number = 15;
 const HOSTNAME: string = 'https://itunes.apple.com';
 const RESERVED_PARAM_TOPPODCASTS: string = 'toppodcasts';
 
+// Cache TTL in seconds
+const CACHE_TTL_SEARCH: number = 3600; // 1 hour for search results
+const CACHE_TTL_TOP: number = 1800; // 30 minutes for top podcasts
+
 const ITUNES_API_GENRES: IGenresDictionary = {
   1301: 'Arts',
   1302: 'Comedy',
@@ -32,17 +36,58 @@ const ITUNES_API_GENRES: IGenresDictionary = {
 };
 
 /**
- * Invokes API call and returns the response as JSON.
+ * Fetches data with Cloudflare Cache API support.
+ * Uses cache-first strategy to minimize external API calls.
+ *
+ * @param url URL to fetch.
+ * @param cacheTtl Time to live for cache in seconds.
+ * @returns Response from cache or fetch
+ */
+async function cachedFetch(url: string, cacheTtl: number): Promise<Response> {
+  const cache = caches.default;
+  const cacheKey = new Request(url, { method: 'GET' });
+
+  // Try to get from cache first
+  let response = await cache.match(cacheKey);
+
+  if (!response) {
+    // Not in cache, fetch from origin
+    response = await fetch(url);
+
+    // Clone response before caching (responses can only be read once)
+    const responseToCache = response.clone();
+
+    // Create a new response with cache headers
+    const cachedResponse = new Response(responseToCache.body, {
+      status: responseToCache.status,
+      statusText: responseToCache.statusText,
+      headers: {
+        ...Object.fromEntries(responseToCache.headers),
+        'Cache-Control': `public, max-age=${cacheTtl}`,
+      },
+    });
+
+    // Cache the response (don't await to avoid blocking)
+    await cache.put(cacheKey, cachedResponse);
+  }
+
+  return response;
+}
+
+/**
+ * Invokes API call and returns the response as JSON with caching support.
  *
  * @param apiCall API request to call.
+ * @param cacheTtl Time to live for cache in seconds.
  * @returns JSON response
  */
-async function handleRequest(apiCall: ApiCall): Promise<Response> {
+async function handleRequest(apiCall: ApiCall, cacheTtl: number): Promise<Response> {
   const init: ResponseInit = {
     headers: {
       'content-type': 'application/json;charset=UTF-8',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET',
+      'Cache-Control': `public, max-age=${cacheTtl}`,
     },
   };
 
@@ -69,7 +114,7 @@ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise
   const route = 'search';
   const mediaType = 'podcast';
   const SEARCH_URL = `${HOSTNAME}/${route}?media=${mediaType}&term=${query}&limit=${limit}`;
-  const response: Response = await fetch(SEARCH_URL);
+  const response: Response = await cachedFetch(SEARCH_URL, CACHE_TTL_SEARCH);
 
   return response.json();
 }
@@ -84,7 +129,7 @@ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise
 async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promise<Response> {
   const genreLookupValue: number | undefined = ITUNES_API_GENRES[genre] ? genre : undefined;
   const TOP_PODCASTS_URL: string = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}/genre=${genreLookupValue}/json`;
-  const response: Response = await fetch(TOP_PODCASTS_URL);
+  const response: Response = await cachedFetch(TOP_PODCASTS_URL, CACHE_TTL_TOP);
 
   return response.json();
 }
@@ -109,9 +154,9 @@ export default {
 
     // Reserved search query terms.
     if (query === RESERVED_PARAM_TOPPODCASTS) {
-      return handleRequest(() => topRequest(limit, genre));
+      return handleRequest(() => topRequest(limit, genre), CACHE_TTL_TOP);
     }
 
-    return handleRequest(() => searchRequest(query, limit));
+    return handleRequest(() => searchRequest(query, limit), CACHE_TTL_SEARCH);
   },
 };
