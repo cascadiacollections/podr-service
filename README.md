@@ -56,7 +56,27 @@ The dev container comes with all necessary dependencies pre-installed.
 
 ### Deployment
 
+The project uses automated deployments via GitHub Actions. Pushes to the `main` branch automatically trigger deployment to Cloudflare Workers after all CI checks pass.
+
+#### Automated Deployment
+
+Deployments are automatically triggered on:
+
+- Pushes to the `main` branch
+- Manual workflow dispatch via GitHub UI
+
+The deployment workflow requires the following GitHub secrets to be configured:
+
+- `CLOUDFLARE_API_TOKEN`: Your Cloudflare API token with Workers deployment permissions
+- `CLOUDFLARE_ACCOUNT_ID`: Your Cloudflare account ID
+
+#### Manual Deployment
+
+You can also deploy manually from your local machine:
+
 ```bash
 # Deploy to Cloudflare Workers
 yarn deploy
 ```
+
+Note: Manual deployment requires Wrangler authentication via `wrangler login` or environment variables.
