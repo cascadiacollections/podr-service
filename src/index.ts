@@ -67,8 +67,8 @@ async function cachedFetch(url: string, cacheTtl: number): Promise<Response> {
       },
     });
 
-    // Cache the response (don't await to avoid blocking)
-    await cache.put(cacheKey, cachedResponse);
+    // Cache the response asynchronously
+    cache.put(cacheKey, cachedResponse);
   }
 
   return response;
