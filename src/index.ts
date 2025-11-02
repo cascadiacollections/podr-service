@@ -36,6 +36,11 @@ const ITUNES_API_GENRES: IGenresDictionary = {
   1326: 'Documentary',
 };
 
+// Pre-compute genre list for schema documentation
+const GENRES_LIST: string = Object.entries(ITUNES_API_GENRES)
+  .map(([id, name]) => `${id} (${name.replace(/·/g, ' ')})`)
+  .join(', ');
+
 /**
  * Fetches data with Cloudflare Cache API support.
  * Uses cache-first strategy to minimize external API calls.
@@ -142,10 +147,6 @@ async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promis
  * @returns OpenAPI schema as JSON
  */
 function getApiSchema(): Record<string, unknown> {
-  const genresList = Object.entries(ITUNES_API_GENRES)
-    .map(([id, name]) => `${id} (${name.replace(/·/g, ' ')})`)
-    .join(', ');
-
   return {
     openapi: '3.0.0',
     info: {
@@ -202,7 +203,7 @@ function getApiSchema(): Record<string, unknown> {
             {
               name: 'genre',
               in: 'query',
-              description: `Genre ID to filter by (applies only to top podcasts). Available genres: ${genresList}`,
+              description: `Genre ID to filter by (applies only to top podcasts). Available genres: ${GENRES_LIST}`,
               required: false,
               schema: {
                 type: 'integer',

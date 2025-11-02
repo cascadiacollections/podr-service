@@ -52,10 +52,17 @@ describe('Podr Service Worker', () => {
 
       expect(schema.paths).toHaveProperty('/');
       // Verify the consolidated path documents all operations
-      expect(schema.paths['/'].get.parameters).toBeDefined();
-      expect(
-        schema.paths['/'].get.responses['200'].content['application/json'].schema.oneOf
-      ).toHaveLength(3);
+      const pathSchema = schema.paths['/'];
+      expect(pathSchema).toHaveProperty('get');
+      expect(pathSchema.get).toHaveProperty('parameters');
+      expect(Array.isArray(pathSchema.get.parameters)).toBe(true);
+
+      const responseSchema = pathSchema.get.responses['200'];
+      expect(responseSchema).toHaveProperty('content');
+      expect(responseSchema.content['application/json']).toHaveProperty('schema');
+      expect(responseSchema.content['application/json'].schema).toHaveProperty('oneOf');
+      expect(Array.isArray(responseSchema.content['application/json'].schema.oneOf)).toBe(true);
+      expect(responseSchema.content['application/json'].schema.oneOf).toHaveLength(3);
     });
 
     test('should handle GET request with search query', async () => {
