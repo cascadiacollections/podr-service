@@ -15,6 +15,46 @@ describe('Podr Service Worker', () => {
   });
 
   describe('fetch handler', () => {
+    test('should return OpenAPI schema at root path', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request);
+
+      expect(response).toBeDefined();
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json;charset=UTF-8');
+      expect(response.headers.get('Cache-Control')).toContain('max-age=86400');
+
+      const schema = await response.json();
+      expect(schema).toHaveProperty('openapi', '3.0.0');
+      expect(schema).toHaveProperty('info');
+      expect(schema).toHaveProperty('paths');
+      expect(schema.info).toHaveProperty('title', 'Podr API');
+    });
+
+    test('should return schema with proper CORS headers', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request);
+
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET');
+    });
+
+    test('should document all API endpoints in schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request);
+      const schema = await response.json();
+
+      expect(schema.paths).toHaveProperty('/');
+      expect(schema.paths).toHaveProperty('/?q={query}');
+      expect(schema.paths).toHaveProperty('/?q=toppodcasts');
+    });
+
     test('should handle GET request with search query', async () => {
       const url = 'http://localhost:8787/?q=javascript';
       const request = new Request(url, { method: 'GET' });

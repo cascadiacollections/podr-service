@@ -11,6 +11,7 @@ const RESERVED_PARAM_TOPPODCASTS: string = 'toppodcasts';
 // Cache TTL in seconds
 const CACHE_TTL_SEARCH: number = 3600; // 1 hour for search results
 const CACHE_TTL_TOP: number = 1800; // 30 minutes for top podcasts
+const CACHE_TTL_SCHEMA: number = 86400; // 24 hours for API schema
 
 const ITUNES_API_GENRES: IGenresDictionary = {
   1301: 'Arts',
@@ -135,6 +136,218 @@ async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promis
 }
 
 /**
+ * Returns OpenAPI 3.0 schema documentation for the API.
+ * Heavily cached for 24 hours to optimize operating costs.
+ *
+ * @returns OpenAPI schema as JSON
+ */
+function getApiSchema(): Record<string, unknown> {
+  const genresList = Object.entries(ITUNES_API_GENRES)
+    .map(([id, name]) => `${id} (${name.replace(/·/g, ' ')})`)
+    .join(', ');
+
+  return {
+    openapi: '3.0.0',
+    info: {
+      title: 'Podr API',
+      version: '1.0.0',
+      description: 'RESTful API for podcast search and discovery powered by iTunes API',
+      contact: {
+        name: 'Podr',
+        url: 'https://www.podrapp.com/',
+      },
+      license: {
+        name: 'MIT',
+        url: 'https://github.com/cascadiacollections/podr-service/blob/main/LICENSE',
+      },
+    },
+    servers: [
+      {
+        url: 'https://podr-service.cascadiacollections.workers.dev',
+        description: 'Production server',
+      },
+    ],
+    paths: {
+      '/': {
+        get: {
+          summary: 'Get API Schema',
+          description: 'Returns OpenAPI 3.0 schema documentation for this API',
+          operationId: 'getSchema',
+          responses: {
+            '200': {
+              description: 'OpenAPI schema',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                  },
+                },
+              },
+              headers: {
+                'Cache-Control': {
+                  description: 'Cached for 24 hours',
+                  schema: {
+                    type: 'string',
+                    example: 'public, max-age=86400',
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/?q={query}': {
+        get: {
+          summary: 'Search Podcasts',
+          description: 'Search for podcasts using the iTunes API',
+          operationId: 'searchPodcasts',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              description: 'Search query term',
+              required: true,
+              schema: {
+                type: 'string',
+                example: 'javascript',
+              },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              description: 'Number of results to return',
+              required: false,
+              schema: {
+                type: 'integer',
+                default: SEARCH_LIMIT,
+                minimum: 1,
+                maximum: 200,
+                example: 15,
+              },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Search results',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      resultCount: {
+                        type: 'integer',
+                      },
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              headers: {
+                'Cache-Control': {
+                  description: 'Cached for 1 hour',
+                  schema: {
+                    type: 'string',
+                    example: 'public, max-age=3600',
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Bad request - missing query parameter',
+            },
+          },
+        },
+      },
+      '/?q=toppodcasts': {
+        get: {
+          summary: 'Get Top Podcasts',
+          description: 'Get top podcasts from iTunes, optionally filtered by genre',
+          operationId: 'getTopPodcasts',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              description: 'Must be set to "toppodcasts"',
+              required: true,
+              schema: {
+                type: 'string',
+                enum: ['toppodcasts'],
+              },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              description: 'Number of results to return',
+              required: false,
+              schema: {
+                type: 'integer',
+                default: SEARCH_LIMIT,
+                minimum: 1,
+                maximum: 200,
+                example: 15,
+              },
+            },
+            {
+              name: 'genre',
+              in: 'query',
+              description: `Genre ID to filter by. Available genres: ${genresList}`,
+              required: false,
+              schema: {
+                type: 'integer',
+                enum: Object.keys(ITUNES_API_GENRES).map(Number),
+                example: 1318,
+              },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Top podcasts feed',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      feed: {
+                        type: 'object',
+                        properties: {
+                          entry: {
+                            type: 'array',
+                            items: {
+                              type: 'object',
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              headers: {
+                'Cache-Control': {
+                  description: 'Cached for 30 minutes',
+                  schema: {
+                    type: 'string',
+                    example: 'public, max-age=1800',
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    components: {
+      schemas: {},
+    },
+  };
+}
+
+/**
  * Modern Module Worker export with fetch handler.
  * Handles podcast search and discovery requests.
  */
@@ -147,7 +360,20 @@ export default {
       });
     }
 
-    const { searchParams } = new URL(request.url);
+    const { searchParams, pathname } = new URL(request.url);
+
+    // Serve API schema at root path when no query params
+    if (pathname === '/' && !searchParams.has('q')) {
+      return new Response(JSON.stringify(getApiSchema(), null, 2), {
+        headers: {
+          'content-type': 'application/json;charset=UTF-8',
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET',
+          'Cache-Control': `public, max-age=${CACHE_TTL_SCHEMA}`,
+        },
+      });
+    }
+
     const query = searchParams.get('q') ?? undefined;
     const limit = searchParams.get('limit') ?? undefined;
     const genre = parseInt(searchParams.get('genre') ?? '-1', 10);
