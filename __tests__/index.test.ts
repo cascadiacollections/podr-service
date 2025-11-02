@@ -15,6 +15,57 @@ describe('Podr Service Worker', () => {
   });
 
   describe('fetch handler', () => {
+    test('should return OpenAPI schema at root path', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request);
+
+      expect(response).toBeDefined();
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json;charset=UTF-8');
+      expect(response.headers.get('Cache-Control')).toContain('max-age=31536000');
+      expect(response.headers.get('Cache-Control')).toContain('immutable');
+
+      const schema = await response.json();
+      expect(schema).toHaveProperty('openapi', '3.0.0');
+      expect(schema).toHaveProperty('info');
+      expect(schema).toHaveProperty('paths');
+      expect(schema.info).toHaveProperty('title', 'Podr API');
+    });
+
+    test('should return schema with proper CORS headers', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request);
+
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET');
+    });
+
+    test('should document all API endpoints in schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request);
+      const schema = await response.json();
+
+      expect(schema.paths).toHaveProperty('/');
+      // Verify the consolidated path documents all operations
+      const pathSchema = schema.paths['/'];
+      expect(pathSchema).toHaveProperty('get');
+      expect(pathSchema.get).toHaveProperty('parameters');
+      expect(Array.isArray(pathSchema.get.parameters)).toBe(true);
+
+      const responseSchema = pathSchema.get.responses['200'];
+      expect(responseSchema).toHaveProperty('content');
+      expect(responseSchema.content['application/json']).toHaveProperty('schema');
+      expect(responseSchema.content['application/json'].schema).toHaveProperty('oneOf');
+      expect(Array.isArray(responseSchema.content['application/json'].schema.oneOf)).toBe(true);
+      expect(responseSchema.content['application/json'].schema.oneOf).toHaveLength(3);
+    });
+
     test('should handle GET request with search query', async () => {
       const url = 'http://localhost:8787/?q=javascript';
       const request = new Request(url, { method: 'GET' });
