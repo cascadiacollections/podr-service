@@ -24,7 +24,8 @@ describe('Podr Service Worker', () => {
       expect(response).toBeDefined();
       expect(response.status).toBe(200);
       expect(response.headers.get('content-type')).toBe('application/json;charset=UTF-8');
-      expect(response.headers.get('Cache-Control')).toContain('max-age=86400');
+      expect(response.headers.get('Cache-Control')).toContain('max-age=31536000');
+      expect(response.headers.get('Cache-Control')).toContain('immutable');
 
       const schema = await response.json();
       expect(schema).toHaveProperty('openapi', '3.0.0');

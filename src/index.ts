@@ -1,3 +1,5 @@
+import type { OpenAPIV3 } from 'openapi-types';
+
 type ApiCall = () => Promise<Response>;
 
 interface IGenresDictionary {
@@ -11,7 +13,7 @@ const RESERVED_PARAM_TOPPODCASTS: string = 'toppodcasts';
 // Cache TTL in seconds
 const CACHE_TTL_SEARCH: number = 3600; // 1 hour for search results
 const CACHE_TTL_TOP: number = 1800; // 30 minutes for top podcasts
-const CACHE_TTL_SCHEMA: number = 86400; // 24 hours for API schema
+const CACHE_TTL_SCHEMA: number = 31536000; // 1 year - schema only changes on redeploy
 
 const ITUNES_API_GENRES: IGenresDictionary = {
   1301: 'Arts',
@@ -142,11 +144,11 @@ async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promis
 
 /**
  * Returns OpenAPI 3.0 schema documentation for the API.
- * Heavily cached for 24 hours to optimize operating costs.
+ * Cached indefinitely (1 year) as schema only changes on code deployment.
  *
  * @returns OpenAPI schema as JSON
  */
-function getApiSchema(): Record<string, unknown> {
+function getApiSchema(): OpenAPIV3.Document {
   return {
     openapi: '3.0.0',
     info: {
@@ -255,11 +257,11 @@ function getApiSchema(): Record<string, unknown> {
               headers: {
                 'Cache-Control': {
                   description:
-                    'Cache duration: 24 hours for schema, 1 hour for search, 30 minutes for top podcasts',
+                    'Cache duration: indefinitely (immutable) for schema, 1 hour for search, 30 minutes for top podcasts',
                   schema: {
                     type: 'string',
                     examples: [
-                      'public, max-age=86400',
+                      'public, max-age=31536000, immutable',
                       'public, max-age=3600',
                       'public, max-age=1800',
                     ],
@@ -305,7 +307,7 @@ export default {
           'content-type': 'application/json;charset=UTF-8',
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET',
-          'Cache-Control': `public, max-age=${CACHE_TTL_SCHEMA}`,
+          'Cache-Control': `public, max-age=${CACHE_TTL_SCHEMA}, immutable`,
         },
       });
     }
