@@ -279,9 +279,6 @@ function getApiSchema(): OpenAPIV3.Document {
         },
       },
     },
-    components: {
-      schemas: {},
-    },
   };
 }
 
