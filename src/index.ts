@@ -170,43 +170,17 @@ function getApiSchema(): Record<string, unknown> {
     paths: {
       '/': {
         get: {
-          summary: 'Get API Schema',
-          description: 'Returns OpenAPI 3.0 schema documentation for this API',
-          operationId: 'getSchema',
-          responses: {
-            '200': {
-              description: 'OpenAPI schema',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                  },
-                },
-              },
-              headers: {
-                'Cache-Control': {
-                  description: 'Cached for 24 hours',
-                  schema: {
-                    type: 'string',
-                    example: 'public, max-age=86400',
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      '/?q={query}': {
-        get: {
-          summary: 'Search Podcasts',
-          description: 'Search for podcasts using the iTunes API',
-          operationId: 'searchPodcasts',
+          summary: 'Podcast API Endpoint',
+          description:
+            'Multi-purpose endpoint that serves API schema (no query params), searches podcasts (with q parameter), or returns top podcasts (with q=toppodcasts)',
+          operationId: 'podcastApi',
           parameters: [
             {
               name: 'q',
               in: 'query',
-              description: 'Search query term',
-              required: true,
+              description:
+                'Query parameter that determines the operation. Omit to get API schema. Set to search term to search podcasts. Set to "toppodcasts" to get top podcasts.',
+              required: false,
               schema: {
                 type: 'string',
                 example: 'javascript',
@@ -215,74 +189,7 @@ function getApiSchema(): Record<string, unknown> {
             {
               name: 'limit',
               in: 'query',
-              description: 'Number of results to return',
-              required: false,
-              schema: {
-                type: 'integer',
-                default: SEARCH_LIMIT,
-                minimum: 1,
-                maximum: 200,
-                example: 15,
-              },
-            },
-          ],
-          responses: {
-            '200': {
-              description: 'Search results',
-              content: {
-                'application/json': {
-                  schema: {
-                    type: 'object',
-                    properties: {
-                      resultCount: {
-                        type: 'integer',
-                      },
-                      results: {
-                        type: 'array',
-                        items: {
-                          type: 'object',
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-              headers: {
-                'Cache-Control': {
-                  description: 'Cached for 1 hour',
-                  schema: {
-                    type: 'string',
-                    example: 'public, max-age=3600',
-                  },
-                },
-              },
-            },
-            '400': {
-              description: 'Bad request - missing query parameter',
-            },
-          },
-        },
-      },
-      '/?q=toppodcasts': {
-        get: {
-          summary: 'Get Top Podcasts',
-          description: 'Get top podcasts from iTunes, optionally filtered by genre',
-          operationId: 'getTopPodcasts',
-          parameters: [
-            {
-              name: 'q',
-              in: 'query',
-              description: 'Must be set to "toppodcasts"',
-              required: true,
-              schema: {
-                type: 'string',
-                enum: ['toppodcasts'],
-              },
-            },
-            {
-              name: 'limit',
-              in: 'query',
-              description: 'Number of results to return',
+              description: 'Number of results to return (applies to search and top podcasts)',
               required: false,
               schema: {
                 type: 'integer',
@@ -295,47 +202,75 @@ function getApiSchema(): Record<string, unknown> {
             {
               name: 'genre',
               in: 'query',
-              description: `Genre ID to filter by. Available genres: ${genresList}`,
+              description: `Genre ID to filter by (applies only to top podcasts). Available genres: ${genresList}`,
               required: false,
               schema: {
                 type: 'integer',
                 enum: Object.keys(ITUNES_API_GENRES).map(Number),
-                example: 1318,
+                example: 1312,
               },
             },
           ],
           responses: {
             '200': {
-              description: 'Top podcasts feed',
+              description: 'Successful response - format depends on query parameters',
               content: {
                 'application/json': {
                   schema: {
-                    type: 'object',
-                    properties: {
-                      feed: {
+                    oneOf: [
+                      {
                         type: 'object',
+                        description: 'OpenAPI schema (when no q parameter)',
                         properties: {
-                          entry: {
-                            type: 'array',
-                            items: {
-                              type: 'object',
+                          openapi: { type: 'string' },
+                          info: { type: 'object' },
+                          paths: { type: 'object' },
+                        },
+                      },
+                      {
+                        type: 'object',
+                        description: 'Search results (when q is a search term)',
+                        properties: {
+                          resultCount: { type: 'integer' },
+                          results: { type: 'array', items: { type: 'object' } },
+                        },
+                      },
+                      {
+                        type: 'object',
+                        description: 'Top podcasts feed (when q=toppodcasts)',
+                        properties: {
+                          feed: {
+                            type: 'object',
+                            properties: {
+                              entry: { type: 'array', items: { type: 'object' } },
                             },
                           },
                         },
                       },
-                    },
+                    ],
                   },
                 },
               },
               headers: {
                 'Cache-Control': {
-                  description: 'Cached for 30 minutes',
+                  description:
+                    'Cache duration: 24 hours for schema, 1 hour for search, 30 minutes for top podcasts',
                   schema: {
                     type: 'string',
-                    example: 'public, max-age=1800',
+                    examples: [
+                      'public, max-age=86400',
+                      'public, max-age=3600',
+                      'public, max-age=1800',
+                    ],
                   },
                 },
               },
+            },
+            '400': {
+              description: 'Bad request - missing or invalid query parameter',
+            },
+            '405': {
+              description: 'Method not allowed - only GET is supported',
             },
           },
         },

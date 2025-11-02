@@ -51,8 +51,11 @@ describe('Podr Service Worker', () => {
       const schema = await response.json();
 
       expect(schema.paths).toHaveProperty('/');
-      expect(schema.paths).toHaveProperty('/?q={query}');
-      expect(schema.paths).toHaveProperty('/?q=toppodcasts');
+      // Verify the consolidated path documents all operations
+      expect(schema.paths['/'].get.parameters).toBeDefined();
+      expect(
+        schema.paths['/'].get.responses['200'].content['application/json'].schema.oneOf
+      ).toHaveLength(3);
     });
 
     test('should handle GET request with search query', async () => {
