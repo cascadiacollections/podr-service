@@ -136,7 +136,7 @@ async function handleRequest(apiCall: ApiCall, cacheTtl: number): Promise<Respon
  */
 async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise<unknown> {
   if (!query) {
-    throw new Response('Empty query', {
+    throw new Response('Missing required query parameter: q', {
       status: 400,
       statusText: 'Bad Request',
     });
@@ -148,7 +148,7 @@ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise
   const response = await cachedFetch(searchUrl, CACHE_TTL_SEARCH);
 
   // Check if response indicates an error
-  if (response.status && response.status >= 400) {
+  if (response.status >= 400) {
     throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
   }
 
@@ -168,7 +168,7 @@ async function topRequest(limit = `${SEARCH_LIMIT}`, genre = -1): Promise<unknow
   const response = await cachedFetch(topPodcastsUrl, CACHE_TTL_TOP);
 
   // Check if response indicates an error
-  if (response.status && response.status >= 400) {
+  if (response.status >= 400) {
     throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
   }
 
