@@ -1,19 +1,30 @@
 import type { OpenAPIV3 } from 'openapi-types';
 
-type ApiCall = () => Promise<Response>;
+/**
+ * Function type for API calls that return a Promise of unknown data
+ */
+type ApiCall = () => Promise<unknown>;
 
+/**
+ * Dictionary mapping iTunes genre IDs to their display names
+ */
 interface IGenresDictionary {
   [key: number]: string;
 }
 
-const SEARCH_LIMIT: number = 15;
-const HOSTNAME: string = 'https://itunes.apple.com';
-const RESERVED_PARAM_TOPPODCASTS: string = 'toppodcasts';
+/**
+ * API Configuration Constants
+ */
+const SEARCH_LIMIT = 15 as const;
+const HOSTNAME = 'https://itunes.apple.com' as const;
+const RESERVED_PARAM_TOPPODCASTS = 'toppodcasts' as const;
 
-// Cache TTL in seconds
-const CACHE_TTL_SEARCH: number = 3600; // 1 hour for search results
-const CACHE_TTL_TOP: number = 1800; // 30 minutes for top podcasts
-const CACHE_TTL_SCHEMA: number = 31536000; // 1 year - schema only changes on redeploy
+/**
+ * Cache TTL Configuration (in seconds)
+ */
+const CACHE_TTL_SEARCH = 3600 as const; // 1 hour for search results
+const CACHE_TTL_TOP = 1800 as const; // 30 minutes for top podcasts
+const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
 
 const ITUNES_API_GENRES: IGenresDictionary = {
   1301: 'Arts',
@@ -47,9 +58,10 @@ const GENRES_LIST: string = Object.entries(ITUNES_API_GENRES)
  * Fetches data with Cloudflare Cache API support.
  * Uses cache-first strategy to minimize external API calls.
  *
- * @param url URL to fetch.
- * @param cacheTtl Time to live for cache in seconds.
+ * @param url - URL to fetch
+ * @param cacheTtl - Time to live for cache in seconds
  * @returns Response from cache or fetch
+ * @throws Error if fetch fails
  */
 async function cachedFetch(url: string, cacheTtl: number): Promise<Response> {
   const cache = caches.default;
@@ -62,58 +74,69 @@ async function cachedFetch(url: string, cacheTtl: number): Promise<Response> {
     // Not in cache, fetch from origin
     response = await fetch(url);
 
-    // Clone response before caching (responses can only be read once)
-    const responseToCache = response.clone();
+    // Only cache successful responses
+    if (response.ok) {
+      // Clone response before caching (responses can only be read once)
+      const responseToCache = response.clone();
 
-    // Create a new response with cache headers
-    const cachedResponse = new Response(responseToCache.body, {
-      status: responseToCache.status,
-      statusText: responseToCache.statusText,
-      headers: {
-        ...Object.fromEntries(responseToCache.headers),
-        'Cache-Control': `public, max-age=${cacheTtl}`,
-      },
-    });
+      // Create a new response with cache headers
+      const cachedResponse = new Response(responseToCache.body, {
+        status: responseToCache.status,
+        statusText: responseToCache.statusText,
+        headers: {
+          ...Object.fromEntries(responseToCache.headers),
+          'Cache-Control': `public, max-age=${cacheTtl}`,
+        },
+      });
 
-    // Cache the response asynchronously
-    cache.put(cacheKey, cachedResponse);
+      // Cache the response asynchronously (don't await to avoid blocking)
+      void cache.put(cacheKey, cachedResponse);
+    }
   }
 
   return response;
 }
 
 /**
+ * Creates standard response headers for API responses
+ *
+ * @param cacheTtl - Time to live for cache in seconds
+ * @returns Headers object
+ */
+function createResponseHeaders(cacheTtl: number): HeadersInit {
+  return {
+    'content-type': 'application/json;charset=UTF-8',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET',
+    'Cache-Control': `public, max-age=${cacheTtl}`,
+  };
+}
+
+/**
  * Invokes API call and returns the response as JSON with caching support.
  *
- * @param apiCall API request to call.
- * @param cacheTtl Time to live for cache in seconds.
+ * @param apiCall - API request to call
+ * @param cacheTtl - Time to live for cache in seconds
  * @returns JSON response
  */
 async function handleRequest(apiCall: ApiCall, cacheTtl: number): Promise<Response> {
-  const init: ResponseInit = {
-    headers: {
-      'content-type': 'application/json;charset=UTF-8',
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET',
-      'Cache-Control': `public, max-age=${cacheTtl}`,
-    },
-  };
-
-  const response: Response = await apiCall();
-
-  return new Response(JSON.stringify(response), init);
+  const data = await apiCall();
+  return new Response(JSON.stringify(data), {
+    headers: createResponseHeaders(cacheTtl),
+  });
 }
 
 /**
  * iTunes search API.
  *
- * @param query the query to issue.
- * @param limit the number of results to return.
- * @returns the response as JSON
+ * @param query - The search query term
+ * @param limit - The number of results to return (default: 15)
+ * @returns Promise containing the search results as JSON
+ * @throws Response with 400 status if query is empty
  */
-async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise<Response> {
+async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise<unknown> {
   if (!query) {
-    return new Response('Empty query', {
+    throw new Response('Missing required query parameter: q', {
       status: 400,
       statusText: 'Bad Request',
     });
@@ -121,8 +144,13 @@ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise
 
   const route = 'search';
   const mediaType = 'podcast';
-  const SEARCH_URL = `${HOSTNAME}/${route}?media=${mediaType}&term=${query}&limit=${limit}`;
-  const response: Response = await cachedFetch(SEARCH_URL, CACHE_TTL_SEARCH);
+  const searchUrl = `${HOSTNAME}/${route}?media=${mediaType}&term=${encodeURIComponent(query)}&limit=${limit}`;
+  const response = await cachedFetch(searchUrl, CACHE_TTL_SEARCH);
+
+  // Check if response indicates an error
+  if (response.status >= 400) {
+    throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
+  }
 
   return response.json();
 }
@@ -130,14 +158,19 @@ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise
 /**
  * iTunes top podcasts API.
  *
- * @param limit the number of results to return.
- * @param genre the genre filter to apply.
- * @returns the response as JSON
+ * @param limit - The number of results to return (default: 15)
+ * @param genre - The genre ID filter to apply (optional)
+ * @returns Promise containing the top podcasts feed as JSON
  */
-async function topRequest(limit = `${SEARCH_LIMIT}`, genre: number = -1): Promise<Response> {
-  const genreLookupValue: number | undefined = ITUNES_API_GENRES[genre] ? genre : undefined;
-  const TOP_PODCASTS_URL: string = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}/genre=${genreLookupValue}/json`;
-  const response: Response = await cachedFetch(TOP_PODCASTS_URL, CACHE_TTL_TOP);
+async function topRequest(limit = `${SEARCH_LIMIT}`, genre = -1): Promise<unknown> {
+  const genreLookupValue = ITUNES_API_GENRES[genre] ? genre : undefined;
+  const topPodcastsUrl = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}/genre=${genreLookupValue}/json`;
+  const response = await cachedFetch(topPodcastsUrl, CACHE_TTL_TOP);
+
+  // Check if response indicates an error
+  if (response.status >= 400) {
+    throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
+  }
 
   return response.json();
 }
@@ -283,41 +316,71 @@ function getApiSchema(): OpenAPIV3.Document {
 }
 
 /**
+ * Creates an error response with appropriate headers
+ *
+ * @param message - Error message
+ * @param status - HTTP status code
+ * @param statusText - HTTP status text
+ * @returns Response object
+ */
+function createErrorResponse(message: string, status: number, statusText: string): Response {
+  return new Response(message, {
+    status,
+    statusText,
+    headers: {
+      'content-type': 'text/plain;charset=UTF-8',
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET',
+    },
+  });
+}
+
+/**
  * Modern Module Worker export with fetch handler.
  * Handles podcast search and discovery requests.
  */
 export default {
   async fetch(request: Request): Promise<Response> {
-    if (request.method !== 'GET') {
-      return new Response('Unsupported', {
-        status: 405,
-        statusText: 'Method Not Allowed',
-      });
+    try {
+      // Only allow GET requests
+      if (request.method !== 'GET') {
+        return createErrorResponse('Unsupported', 405, 'Method Not Allowed');
+      }
+
+      const { searchParams, pathname } = new URL(request.url);
+
+      // Serve API schema at root path when no query params
+      if (pathname === '/' && !searchParams.has('q')) {
+        return new Response(JSON.stringify(getApiSchema(), null, 2), {
+          headers: {
+            'content-type': 'application/json;charset=UTF-8',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Cache-Control': `public, max-age=${CACHE_TTL_SCHEMA}, immutable`,
+          },
+        });
+      }
+
+      const query = searchParams.get('q') ?? undefined;
+      const limit = searchParams.get('limit') ?? undefined;
+      const genre = parseInt(searchParams.get('genre') ?? '-1', 10);
+
+      // Handle top podcasts request
+      if (query === RESERVED_PARAM_TOPPODCASTS) {
+        return handleRequest(() => topRequest(limit, genre), CACHE_TTL_TOP);
+      }
+
+      // Handle search request
+      return handleRequest(() => searchRequest(query, limit), CACHE_TTL_SEARCH);
+    } catch (error) {
+      // Handle thrown Response objects (e.g., from searchRequest validation)
+      if (error instanceof Response) {
+        return error;
+      }
+
+      // Handle other errors
+      const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+      return createErrorResponse(errorMessage, 500, 'Internal Server Error');
     }
-
-    const { searchParams, pathname } = new URL(request.url);
-
-    // Serve API schema at root path when no query params
-    if (pathname === '/' && !searchParams.has('q')) {
-      return new Response(JSON.stringify(getApiSchema(), null, 2), {
-        headers: {
-          'content-type': 'application/json;charset=UTF-8',
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET',
-          'Cache-Control': `public, max-age=${CACHE_TTL_SCHEMA}, immutable`,
-        },
-      });
-    }
-
-    const query = searchParams.get('q') ?? undefined;
-    const limit = searchParams.get('limit') ?? undefined;
-    const genre = parseInt(searchParams.get('genre') ?? '-1', 10);
-
-    // Reserved search query terms.
-    if (query === RESERVED_PARAM_TOPPODCASTS) {
-      return handleRequest(() => topRequest(limit, genre), CACHE_TTL_TOP);
-    }
-
-    return handleRequest(() => searchRequest(query, limit), CACHE_TTL_SEARCH);
   },
 };
