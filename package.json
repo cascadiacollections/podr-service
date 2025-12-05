@@ -18,18 +18,18 @@
   "author": "Kevin T. Coughlin",
   "license": "MIT",
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20251127.0",
+    "@cloudflare/workers-types": "4.20251202.0",
     "@eslint/js": "^9.39.1",
     "@types/jest": "30.0.0",
-    "@typescript-eslint/eslint-plugin": "8.48.0",
-    "@typescript-eslint/parser": "8.48.0",
+    "@typescript-eslint/eslint-plugin": "8.48.1",
+    "@typescript-eslint/parser": "8.48.1",
     "eslint": "9.39.1",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-prettier": "^5.5.4",
     "jest": "30.2.0",
     "openapi-types": "^12.1.3",
-    "prettier": "3.7.0",
-    "ts-jest": "29.4.5",
+    "prettier": "3.7.3",
+    "ts-jest": "29.4.6",
     "ts-loader": "9.5.4",
     "typescript": "5.9.3",
     "typescript-eslint": "^8.48.1",
@@ -37,7 +37,7 @@
     "webpack-cli": "6.0.1"
   },
   "dependencies": {
-    "wrangler": "^4.51.0"
+    "wrangler": "^4.52.1"
   },
   "packageManager": "yarn@4.10.3"
 }
