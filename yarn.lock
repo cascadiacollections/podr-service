@@ -599,7 +599,7 @@ __metadata:
     ts-jest: "npm:29.4.6"
     ts-loader: "npm:9.5.4"
     typescript: "npm:5.9.3"
-    typescript-eslint: "npm:^8.51.0"
+    typescript-eslint: "npm:^8.52.0"
     webpack: "npm:5.104.1"
     webpack-cli: "npm:6.0.1"
     wrangler: "npm:^4.57.0"
@@ -6342,18 +6342,18 @@ __metadata:
   languageName: node
   linkType: hard
 
-"typescript-eslint@npm:^8.51.0":
-  version: 8.51.0
-  resolution: "typescript-eslint@npm:8.51.0"
+"typescript-eslint@npm:^8.52.0":
+  version: 8.52.0
+  resolution: "typescript-eslint@npm:8.52.0"
   dependencies:
-    "@typescript-eslint/eslint-plugin": "npm:8.51.0"
-    "@typescript-eslint/parser": "npm:8.51.0"
-    "@typescript-eslint/typescript-estree": "npm:8.51.0"
-    "@typescript-eslint/utils": "npm:8.51.0"
+    "@typescript-eslint/eslint-plugin": "npm:8.52.0"
+    "@typescript-eslint/parser": "npm:8.52.0"
+    "@typescript-eslint/typescript-estree": "npm:8.52.0"
+    "@typescript-eslint/utils": "npm:8.52.0"
   peerDependencies:
     eslint: ^8.57.0 || ^9.0.0
     typescript: ">=4.8.4 <6.0.0"
-  checksum: 10c0/ae26e783e7c2e1e2b20c278e5d743fc9aa0ea0ce3c3c06c53f7b0913617ec75d40cb8732fec85e95071e87a5a90fa0867e2c3a11d7b8fec986c55460cc652b47
+  checksum: 10c0/9ea293bec97748280f6018ff8287497323ad8f31f3b1b28f6b17444e272623e6a27bacd2cb217bbb9cf3401c52196188a9a4b4a703f5dda09405b35927c04c6b
   languageName: node
   linkType: hard
 
