@@ -27,12 +27,6 @@ jobs:
         node-version: ${{ env.NODE_VERSION }}
         cache: 'yarn'
 
-    - name: Install build dependencies
-      run: sudo apt-get update && sudo apt-get install -y build-essential python3 pkg-config libvips-dev
-
-    - name: Clean Yarn cache
-      run: yarn cache clean
-
     - name: Install dependencies
       run: yarn install --frozen-lockfile
 
