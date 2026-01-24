@@ -1,41 +1,7 @@
 version: 2
 updates:
+  # NPM dependencies - weekly to reduce PR churn and CI costs
   - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "daily"
-      time: "03:00"
-      timezone: "America/Los_Angeles"
-    assignees:
-      - "KevinTCoughlin"
-    labels:
-      - "dependencies"
-      - "npm"
-    commit-message:
-      prefix: "chore(deps)"
-      include: "scope"
-    open-pull-requests-limit: 10
-    versioning-strategy: increase
-    groups:
-      dev-dependencies:
-        patterns:
-          - "@types/*"
-          - "@typescript-eslint/*"
-          - "eslint*"
-          - "prettier"
-          - "jest"
-          - "ts-*"
-          - "typescript"
-          - "webpack*"
-        update-types:
-          - "minor"
-          - "patch"
-      production-dependencies:
-        patterns:
-          - "wrangler"
-          - "@cloudflare/*"
-
-  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
@@ -46,8 +12,51 @@ updates:
       - "KevinTCoughlin"
     labels:
       - "dependencies"
-      - "github-actions"
+      - "npm"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
     open-pull-requests-limit: 5
+    versioning-strategy: increase
+    groups:
+      # Group all dev dependencies together to reduce PRs
+      dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "@typescript-eslint/*"
+          - "@eslint/*"
+          - "eslint*"
+          - "prettier"
+          - "jest"
+          - "ts-*"
+          - "typescript"
+          - "typescript-eslint"
+          - "webpack*"
+        update-types:
+          - "minor"
+          - "patch"
+      # Group Cloudflare-related dependencies
+      cloudflare:
+        patterns:
+          - "wrangler"
+          - "@cloudflare/*"
+
+  # GitHub Actions - monthly (less frequent updates)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    assignees:
+      - "KevinTCoughlin"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+    open-pull-requests-limit: 3
+    groups:
+      # Group all GitHub Actions together
+      actions:
+        patterns:
+          - "*"
