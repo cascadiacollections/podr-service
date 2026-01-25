@@ -11,6 +11,10 @@ compatibility_flags = [
   "request_signal_passthrough"
 ]
 
+# CPU limits - stay within free tier (10ms max)
+[limits]
+cpu_ms = 10
+
 # Workers AI/placement optimization
 [placement]
 mode = "smart"
