@@ -65,15 +65,18 @@ preview_id = "a5a0884fc5a2469f8300ab4aabad5553"
 crons = ["0 */6 * * *"]  # Run every 6 hours
 
 # Container configuration for iTunes proxy (avoids Apple blocking Worker IPs)
-[[containers]]
-class_name = "ITunesProxy"
-image = "./Dockerfile"
-max_instances = 5
-
-[[durable_objects.bindings]]
-name = "ITUNES_PROXY"
-class_name = "ITunesProxy"
-
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["ITunesProxy"]
+# Note: Cloudflare Containers is in beta and requires explicit access.
+# Apply at: https://www.cloudflare.com/lp/containers/
+# Uncomment once beta access is granted:
+# [[containers]]
+# class_name = "ITunesProxy"
+# image = "./Dockerfile"
+# max_instances = 5
+#
+# [[durable_objects.bindings]]
+# name = "ITUNES_PROXY"
+# class_name = "ITunesProxy"
+#
+# [[migrations]]
+# tag = "v1"
+# new_sqlite_classes = ["ITunesProxy"]
