@@ -6,9 +6,3 @@ ALTER TABLE search_queries ADD COLUMN country TEXT;
 -- Index for country-based trending queries lookup
 CREATE INDEX IF NOT EXISTS idx_search_queries_country_date_count
   ON search_queries(country, date DESC, search_count DESC);
-
--- Update the unique constraint to include country
--- Note: SQLite doesn't support ALTER TABLE to modify constraints,
--- so we need to create a new unique index instead
-CREATE UNIQUE INDEX IF NOT EXISTS idx_search_queries_hash_date_country
-  ON search_queries(query_hash, date, country);

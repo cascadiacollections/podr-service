@@ -579,12 +579,13 @@ async function trackSearchQuery(env: Env, query: string, country?: string): Prom
     const normalizedCountry = country?.toUpperCase() ?? null;
 
     // Upsert: try to update first, insert if no rows affected
+    // Using 'IS' instead of '=' to properly handle NULL comparison in SQLite
     const updateResult = await env.DB.prepare(
       `UPDATE search_queries
        SET search_count = search_count + 1, updated_at = datetime('now')
-       WHERE query_hash = ? AND date = ? AND (country = ? OR (country IS NULL AND ? IS NULL))`
+       WHERE query_hash = ? AND date = ? AND country IS ?`
     )
-      .bind(queryHash, today, normalizedCountry, normalizedCountry)
+      .bind(queryHash, today, normalizedCountry)
       .run();
 
     // If no rows were updated, insert new row
