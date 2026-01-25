@@ -2,9 +2,14 @@ name = "podr-service"
 main = "src/index.ts"
 tsconfig = "./tsconfig.json"
 
-# Modern Wrangler 4 configuration
-compatibility_date = "2025-01-01"
-compatibility_flags = [ "nodejs_compat", "nodejs_als" ]
+# Modern Wrangler 4 configuration - use latest date for all stability improvements
+compatibility_date = "2026-01-20"
+compatibility_flags = [
+  "nodejs_compat",
+  "nodejs_als",
+  # Experimental: pass abort signals to subrequests (iTunes API)
+  "request_signal_passthrough"
+]
 
 # Workers AI/placement optimization
 [placement]
