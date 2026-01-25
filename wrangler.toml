@@ -39,16 +39,18 @@ dataset = "podr_metrics"
 # KV namespace for feature flags
 [[kv_namespaces]]
 binding = "FLAGS"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+id = "a5a0884fc5a2469f8300ab4aabad5553"
+preview_id = "a5a0884fc5a2469f8300ab4aabad5553"
 
 # D1 database for search analytics
-[[d1_databases]]
-binding = "DB"
-database_name = "podr-analytics"
-database_id = "REPLACE_WITH_D1_DATABASE_ID"
+# Disabled until D1 database is created
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "podr-analytics"
+# database_id = "REPLACE_WITH_D1_DATABASE_ID"
 
 # R2 bucket for analytics data lake (batch processing, long-term storage)
-[[r2_buckets]]
-binding = "ANALYTICS_LAKE"
-bucket_name = "podr-analytics-lake"
+# Disabled until R2 is enabled in Cloudflare Dashboard
+# [[r2_buckets]]
+# binding = "ANALYTICS_LAKE"
+# bucket_name = "podr-analytics-lake"
