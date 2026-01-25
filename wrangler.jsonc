@@ -74,6 +74,11 @@
     }
   ],
 
+  // Workers AI for podcast summaries
+  "ai": {
+    "binding": "AI"
+  },
+
   // Podcast Index API credentials (set via wrangler secret put)
   // Register at https://api.podcastindex.org/signup
   // Run: wrangler secret put PODCAST_INDEX_KEY

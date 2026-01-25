@@ -1789,4 +1789,349 @@ describe('Podr Service Worker', () => {
       expect(mockCtxForR2.waitUntil).toHaveBeenCalled();
     });
   });
+
+  describe('podcast summary feature', () => {
+    const mockPodcastLookupResponse = {
+      resultCount: 2,
+      results: [
+        {
+          wrapperType: 'track',
+          kind: 'podcast',
+          trackId: 1535809341,
+          trackName: 'Test Podcast',
+          artworkUrl600: 'https://example.com/artwork.jpg',
+          feedUrl: 'https://example.com/feed.xml',
+          genres: ['Technology', 'News'],
+          description: 'A podcast about technology and news that explores the latest trends.',
+        },
+        {
+          wrapperType: 'track',
+          kind: 'podcast-episode',
+          trackId: 1000000001,
+          trackName: 'Episode 1',
+          releaseDate: '2026-01-20T00:00:00Z',
+          trackTimeMillis: 3600000,
+          description: 'First episode description',
+        },
+      ],
+    };
+
+    // Mock AI binding
+    const createMockAI = (response: string | null) => ({
+      run: jest.fn(() => Promise.resolve({ response })),
+    });
+
+    // Mock KV with summary support
+    const createMockKVWithSummary = (cachedSummary: string | null = null) => ({
+      get: jest.fn((key: string) => {
+        if (key === 'flag:podcastSummaries') return Promise.resolve('true');
+        if (key.startsWith('summary:')) return Promise.resolve(cachedSummary);
+        return Promise.resolve(null);
+      }),
+      put: jest.fn(() => Promise.resolve()),
+    });
+
+    beforeEach(() => {
+      const mockCache = {
+        match: jest.fn(() => Promise.resolve(undefined)),
+        put: jest.fn(() => Promise.resolve()),
+      };
+
+      global.caches = {
+        default: mockCache,
+      } as unknown as CacheStorage;
+    });
+
+    test('should return summary when summary=true and feature enabled', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=true';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const mockEnvWithAI = {
+        FLAGS: createMockKVWithSummary(),
+        AI: createMockAI('This is a great podcast about technology.'),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithAI, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toHaveProperty('summary', 'This is a great podcast about technology.');
+    });
+
+    test('should not return summary when summary=false', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=false';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const mockEnvWithAI = {
+        FLAGS: createMockKVWithSummary(),
+        AI: createMockAI('This should not appear.'),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithAI, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).not.toHaveProperty('summary');
+    });
+
+    test('should not return summary when summary param omitted', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const mockEnvWithAI = {
+        FLAGS: createMockKVWithSummary(),
+        AI: createMockAI('This should not appear.'),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithAI, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).not.toHaveProperty('summary');
+    });
+
+    test('should return cached summary when available', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=true';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const cachedSummary = 'Cached summary from KV.';
+      const mockAI = createMockAI('New AI summary.');
+      const mockEnvWithCachedSummary = {
+        FLAGS: createMockKVWithSummary(cachedSummary),
+        AI: mockAI,
+      };
+
+      const response = await worker.fetch(request, mockEnvWithCachedSummary, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toHaveProperty('summary', cachedSummary);
+      // AI should not be called when cache hit
+      expect(mockAI.run).not.toHaveBeenCalled();
+    });
+
+    test('should gracefully handle when AI unavailable', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=true';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      // No AI binding
+      const mockEnvNoAI = {
+        FLAGS: createMockKVWithSummary(),
+      };
+
+      const response = await worker.fetch(request, mockEnvNoAI, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // Should return podcast data without summary
+      expect(body).toHaveProperty('podcast');
+      expect(body).toHaveProperty('episodes');
+      expect(body).not.toHaveProperty('summary');
+    });
+
+    test('should not return summary when feature flag disabled', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=true';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const mockEnvFlagDisabled = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:podcastSummaries') return Promise.resolve('false');
+            return Promise.resolve(null);
+          }),
+          put: jest.fn(() => Promise.resolve()),
+        },
+        AI: createMockAI('Should not be called.'),
+      };
+
+      const response = await worker.fetch(request, mockEnvFlagDisabled, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).not.toHaveProperty('summary');
+    });
+
+    test('should cache generated summary in KV', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=true';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const mockKV = createMockKVWithSummary();
+      const mockEnvWithAI = {
+        FLAGS: mockKV,
+        AI: createMockAI('New summary to be cached.'),
+      };
+
+      const mockCtxForCaching = {
+        waitUntil: jest.fn(),
+        passThroughOnException: jest.fn(),
+      } as unknown as ExecutionContext;
+
+      await worker.fetch(request, mockEnvWithAI, mockCtxForCaching);
+
+      // waitUntil should be called for caching the summary
+      expect(mockCtxForCaching.waitUntil).toHaveBeenCalled();
+    });
+
+    test('should handle AI returning empty response', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=true';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const mockEnvWithEmptyAI = {
+        FLAGS: createMockKVWithSummary(),
+        AI: createMockAI(null),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithEmptyAI, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // Should return podcast data without summary
+      expect(body).toHaveProperty('podcast');
+      expect(body).not.toHaveProperty('summary');
+    });
+
+    test('should include summary parameter in schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+      const schema = await response.json();
+
+      const podcastPath = schema.paths['/podcast/{id}'];
+      expect(podcastPath).toBeDefined();
+      expect(podcastPath.get.parameters).toHaveLength(2);
+
+      const summaryParam = podcastPath.get.parameters.find(
+        (p: { name: string }) => p.name === 'summary'
+      );
+      expect(summaryParam).toBeDefined();
+      expect(summaryParam.in).toBe('query');
+      expect(summaryParam.required).toBe(false);
+    });
+
+    test('should include summary in response schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+      const schema = await response.json();
+
+      const responseSchema =
+        schema.paths['/podcast/{id}'].get.responses['200'].content['application/json'].schema;
+      expect(responseSchema.properties).toHaveProperty('summary');
+      expect(responseSchema.properties.summary.type).toBe('string');
+    });
+  });
 });
