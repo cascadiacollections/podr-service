@@ -9,7 +9,20 @@
       "Bash(docker info:*)",
       "WebSearch",
       "WebFetch(domain:developers.cloudflare.com)",
-      "Bash(yarn add:*)"
+      "Bash(yarn add:*)",
+      "Bash(npx wrangler deploy:*)",
+      "Bash(gh run:*)",
+      "Bash(npx esbuild:*)",
+      "Bash(gh secret list:*)",
+      "Bash(git push:*)",
+      "Bash(tee:*)",
+      "Bash(curl:*)",
+      "Bash(npx wrangler --version)",
+      "Bash(npm show:*)",
+      "Bash(gh workflow run:*)",
+      "Bash(yarn format:*)",
+      "Bash(yarn lint)",
+      "Bash(yarn test)"
     ]
   }
 }

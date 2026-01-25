@@ -100,23 +100,23 @@ GET /    # Returns OpenAPI 3.0 schema (when no query params)
 
 ## Cache Configuration
 
-| Endpoint | TTL | Stale Tolerance |
-|----------|-----|-----------------|
-| Schema | 1 year (immutable) | N/A |
-| Search | 24 hours | 24 hours |
-| Top Podcasts | 2 hours | 24 hours |
-| Podcast Detail | 4 hours | 24 hours |
-| Trending/Suggest | 5 minutes | N/A |
+| Endpoint         | TTL                | Stale Tolerance |
+| ---------------- | ------------------ | --------------- |
+| Schema           | 1 year (immutable) | N/A             |
+| Search           | 24 hours           | 24 hours        |
+| Top Podcasts     | 2 hours            | 24 hours        |
+| Podcast Detail   | 4 hours            | 24 hours        |
+| Trending/Suggest | 5 minutes          | N/A             |
 
 ## Feature Flags
 
 Controlled via KV namespace `FLAGS`:
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `trendingQueries` | Enable /trending and /suggest endpoints | false |
-| `podcastIndex` | Use Podcast Index API instead of iTunes | false |
-| `analyticsExport` | Export events to R2 data lake | false |
+| Flag              | Description                             | Default |
+| ----------------- | --------------------------------------- | ------- |
+| `trendingQueries` | Enable /trending and /suggest endpoints | false   |
+| `podcastIndex`    | Use Podcast Index API instead of iTunes | false   |
+| `analyticsExport` | Export events to R2 data lake           | false   |
 
 Set flags: `wrangler kv:key put --binding FLAGS "flag:trendingQueries" "true"`
 

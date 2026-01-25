@@ -28,14 +28,14 @@ All iTunes API calls are routed through a Cloudflare Workers Container (`ITunesP
 
 ### Bindings
 
-| Binding | Type | Purpose |
-|---------|------|---------|
-| `ITUNES_PROXY` | Durable Object | Container proxy for iTunes API |
-| `FLAGS` | KV Namespace | Feature flag storage |
-| `ANALYTICS` | Analytics Engine | Real-time metrics |
-| `ANALYTICS_LAKE` | R2 Bucket | Event data lake for batch processing |
-| `RATE_LIMITER` | Rate Limit | 100 req/60s per client IP |
-| `DB` | D1 Database | Trending queries (when enabled) |
+| Binding          | Type             | Purpose                              |
+| ---------------- | ---------------- | ------------------------------------ |
+| `ITUNES_PROXY`   | Durable Object   | Container proxy for iTunes API       |
+| `FLAGS`          | KV Namespace     | Feature flag storage                 |
+| `ANALYTICS`      | Analytics Engine | Real-time metrics                    |
+| `ANALYTICS_LAKE` | R2 Bucket        | Event data lake for batch processing |
+| `RATE_LIMITER`   | Rate Limit       | 100 req/60s per client IP            |
+| `DB`             | D1 Database      | Trending queries (when enabled)      |
 
 ### Feature Flags (KV)
 
@@ -163,11 +163,11 @@ yarn build
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/index.ts` | Main worker code, all endpoints |
-| `wrangler.jsonc` | Cloudflare Workers configuration |
-| `container_src/main.go` | iTunes proxy container |
-| `Dockerfile` | Container image definition |
-| `migrations/` | D1 database migrations |
-| `__tests__/index.test.ts` | Jest test suite |
+| File                      | Purpose                          |
+| ------------------------- | -------------------------------- |
+| `src/index.ts`            | Main worker code, all endpoints  |
+| `wrangler.jsonc`          | Cloudflare Workers configuration |
+| `container_src/main.go`   | iTunes proxy container           |
+| `Dockerfile`              | Container image definition       |
+| `migrations/`             | D1 database migrations           |
+| `__tests__/index.test.ts` | Jest test suite                  |
