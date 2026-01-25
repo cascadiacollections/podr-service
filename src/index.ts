@@ -278,8 +278,8 @@ const MAX_LIMIT = 200 as const;
  * Cache TTL Configuration (in seconds)
  */
 const CACHE_TTL_SEARCH = 86400 as const; // 24 hours for search results
-const CACHE_TTL_TOP = 1800 as const; // 30 minutes for top podcasts
-const CACHE_TTL_PODCAST_DETAIL = 3600 as const; // 1 hour for podcast details
+const CACHE_TTL_TOP = 7200 as const; // 2 hours for top podcasts (RSS updates slowly)
+const CACHE_TTL_PODCAST_DETAIL = 14400 as const; // 4 hours for podcast details (metadata rarely changes)
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
 const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
 
@@ -813,19 +813,19 @@ function recordFailure(): void {
 }
 
 /**
- * Fetches data with Cloudflare Cache API support.
- * Uses cache-first strategy to minimize external API calls.
- * Returns cache hit information for observability.
+ * Cached fetch that routes through the container proxy to avoid Apple IP blocking.
+ * Falls back to direct fetch if proxy is unavailable.
  *
- * @param url - URL to fetch
+ * @param url - iTunes API URL to fetch
  * @param cacheTtl - Time to live for cache in seconds
+ * @param env - Worker environment bindings
  * @param ctx - Execution context for waitUntil (optional)
  * @returns Response from cache or fetch with cache hit info
- * @throws Error if fetch fails
  */
-async function cachedFetch(
+async function cachedFetchViaProxy(
   url: string,
   cacheTtl: number,
+  env: Env,
   ctx?: ExecutionContext
 ): Promise<CachedFetchResult> {
   const cache = caches.default;
@@ -833,7 +833,6 @@ async function cachedFetch(
 
   // Check circuit breaker
   if (isCircuitOpen()) {
-    // Try to serve from cache even if stale
     const staleResponse = await cache.match(cacheKey);
     if (staleResponse) {
       log('warn', 'Circuit open, serving stale cache', { url });
@@ -846,30 +845,35 @@ async function cachedFetch(
   const cachedResponse = await cache.match(cacheKey);
 
   if (cachedResponse) {
-    // Check if we should revalidate in background (SWR)
     const age = cachedResponse.headers.get('age');
     const ageSeconds = age ? parseInt(age, 10) : 0;
 
     if (ageSeconds > cacheTtl && ageSeconds < CACHE_STALE_TOLERANCE && ctx) {
-      // Serve stale, revalidate in background
-      ctx.waitUntil(revalidateCache(url, cacheTtl, cache, cacheKey));
+      ctx.waitUntil(revalidateCacheViaProxy(url, cacheTtl, cache, cacheKey, env));
       log('info', 'Serving stale, revalidating in background', { url, ageSeconds });
     }
 
     return { response: cachedResponse, cacheHit: true };
   }
 
-  // Not in cache, fetch from origin
+  // Not in cache, fetch via proxy
   try {
-    const response = await fetch(url);
+    let response: Response;
+
+    if (env.ITUNES_PROXY) {
+      const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+      const container = env.ITUNES_PROXY.get(containerId);
+      const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
+      response = await container.fetch(proxyUrl);
+    } else {
+      log('warn', 'ITUNES_PROXY not available, using direct fetch', { url });
+      response = await fetch(url);
+    }
 
     if (response.ok) {
       recordSuccess();
 
-      // Clone response before caching (responses can only be read once)
       const responseToCache = response.clone();
-
-      // Create a new response with cache headers
       const cachedResponseToStore = new Response(responseToCache.body, {
         status: responseToCache.status,
         statusText: responseToCache.statusText,
@@ -879,7 +883,6 @@ async function cachedFetch(
         },
       });
 
-      // Cache the response asynchronously (don't await to avoid blocking)
       void cache.put(cacheKey, cachedResponseToStore);
     } else {
       recordFailure();
@@ -893,16 +896,27 @@ async function cachedFetch(
 }
 
 /**
- * Revalidates cache entry in background
+ * Revalidates cache entry in background using container proxy
  */
-async function revalidateCache(
+async function revalidateCacheViaProxy(
   url: string,
   cacheTtl: number,
   cache: Cache,
-  cacheKey: Request
+  cacheKey: Request,
+  env: Env
 ): Promise<void> {
   try {
-    const response = await fetch(url);
+    let response: Response;
+
+    if (env.ITUNES_PROXY) {
+      const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+      const container = env.ITUNES_PROXY.get(containerId);
+      const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
+      response = await container.fetch(proxyUrl);
+    } else {
+      response = await fetch(url);
+    }
+
     if (response.ok) {
       recordSuccess();
       const cachedResponse = new Response(response.body, {
@@ -914,7 +928,7 @@ async function revalidateCache(
         },
       });
       await cache.put(cacheKey, cachedResponse);
-      log('info', 'Cache revalidated', { url });
+      log('info', 'Cache revalidated via proxy', { url });
     } else {
       recordFailure();
       log('warn', 'Cache revalidation failed', { url, status: response.status });
@@ -1245,11 +1259,12 @@ interface PodcastDetailResponse {
  */
 async function podcastDetailRequest(
   podcastId: number,
+  env: Env,
   ctx?: ExecutionContext
 ): Promise<{ data: PodcastDetailResponse; cacheHit: boolean }> {
-  // Fetch podcast with episodes using lookup API
+  // Fetch podcast with episodes using lookup API via container proxy
   const lookupUrl = `${HOSTNAME}/lookup?id=${podcastId}&entity=podcastEpisode&limit=${PODCAST_EPISODE_LIMIT}`;
-  const { response, cacheHit } = await cachedFetch(lookupUrl, CACHE_TTL_PODCAST_DETAIL, ctx);
+  const { response, cacheHit } = await cachedFetchViaProxy(lookupUrl, CACHE_TTL_PODCAST_DETAIL, env, ctx);
 
   // Check if response indicates an error
   if (response.status >= 400) {
@@ -1337,14 +1352,25 @@ function handleHealthCheck(request: Request): Response {
 /**
  * Deep health check - tests upstream connectivity
  */
-async function handleDeepHealthCheck(request: Request): Promise<Response> {
+async function handleDeepHealthCheck(request: Request, env: Env): Promise<Response> {
   const startTime = Date.now();
   let upstreamOk = false;
   let upstreamLatency = 0;
 
   try {
     const testUrl = `${HOSTNAME}/search?media=podcast&term=test&limit=1`;
-    const response = await fetch(testUrl);
+    let response: Response;
+
+    // Use container proxy to test the actual production path
+    if (env.ITUNES_PROXY) {
+      const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+      const container = env.ITUNES_PROXY.get(containerId);
+      const proxyUrl = `http://container/?url=${encodeURIComponent(testUrl)}`;
+      response = await container.fetch(proxyUrl);
+    } else {
+      response = await fetch(testUrl);
+    }
+
     upstreamLatency = Date.now() - startTime;
     upstreamOk = response.ok;
   } catch {
@@ -1889,7 +1915,7 @@ export default {
         return handleHealthCheck(request);
       }
       if (pathname === '/health/deep') {
-        return await handleDeepHealthCheck(request);
+        return await handleDeepHealthCheck(request, env);
       }
 
       // Trending queries endpoint (feature flagged)
@@ -1995,7 +2021,7 @@ export default {
           return createErrorResponse('Invalid podcast ID', 400, 'Bad Request');
         }
 
-        const { data, cacheHit } = await podcastDetailRequest(podcastId, ctx);
+        const { data, cacheHit } = await podcastDetailRequest(podcastId, env, ctx);
         const duration = Date.now() - startTime;
 
         log('info', 'Podcast detail request', {
