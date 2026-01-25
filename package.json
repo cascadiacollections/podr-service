@@ -6,8 +6,8 @@
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --outdir=dist",
-    "lint": "eslint --ext .ts ./src ./__tests__",
-    "lint:fix": "eslint --ext .ts ./src ./__tests__ --fix",
+    "lint": "eslint ./src ./__tests__",
+    "lint:fix": "eslint ./src ./__tests__ --fix",
     "format": "prettier --write \"**/*.{js,ts,json,md}\"",
     "format:check": "prettier --check \"**/*.{js,ts,json,md}\"",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --passWithNoTests",
@@ -30,11 +30,8 @@
     "openapi-types": "^12.1.3",
     "prettier": "3.8.1",
     "ts-jest": "29.4.6",
-    "ts-loader": "9.5.4",
     "typescript": "5.9.3",
-    "typescript-eslint": "^8.53.1",
-    "webpack": "5.104.1",
-    "webpack-cli": "6.0.1"
+    "typescript-eslint": "^8.53.1"
   },
   "dependencies": {
     "wrangler": "^4.60.0"

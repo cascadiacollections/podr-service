@@ -6,6 +6,7 @@
     "lib": ["esnext", "dom"],
     "alwaysStrict": true,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
     "moduleResolution": "nodenext",
     "esModuleInterop": true,
     "isolatedModules": true,
