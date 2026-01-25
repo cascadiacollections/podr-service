@@ -1,11 +1,13 @@
 name: CI
 
 on:
-  push:
-    branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
-  # Allow the workflow to be manually triggered via the GitHub UI
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.mise.toml'
   workflow_dispatch:
 
 permissions:
@@ -14,11 +16,18 @@ permissions:
 env:
   NODE_VERSION: '24'
 
+# Cancel in-progress runs when new commits are pushed
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Optimized for GitHub Enterprise COGS:
+# - CI only runs on PRs (deploy workflow handles main, trusts PR checks)
+# - Path filters skip CI for docs-only changes
+# - Concurrency cancels superseded runs
 # - Single job combines lint, test, and build to reduce runner overhead
 # - Single Node.js version (production target) instead of matrix
 # - No artifact uploads (deploy workflow builds fresh)
-# - Dependency review only on PRs
 
 jobs:
   ci:
@@ -52,7 +61,6 @@ jobs:
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
     steps:
     - name: Checkout code
       uses: actions/checkout@v6

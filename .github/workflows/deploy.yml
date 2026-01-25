@@ -3,7 +3,11 @@ name: Deploy to Cloudflare Workers
 on:
   push:
     branches: [ "main" ]
-  # Allow manual deployment via GitHub UI
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.mise.toml'
   workflow_dispatch:
 
 permissions:
@@ -13,6 +17,11 @@ permissions:
 env:
   NODE_VERSION: '24'
   WORKER_URL: 'https://podr-service.cascadiacollections.workers.dev'
+
+# Cancel in-progress deploys when new commits are pushed
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   deploy:
@@ -39,23 +48,15 @@ jobs:
 
     - name: Post-deploy health check
       run: |
-        echo "Waiting for deployment to propagate..."
-        sleep 10
-
-        echo "Checking health endpoint..."
-        RESPONSE=$(curl -sf "${{ env.WORKER_URL }}/health" || echo "FAILED")
-
+        sleep 5
+        RESPONSE=$(curl -sf --retry 3 --retry-delay 2 "${{ env.WORKER_URL }}/health" || echo "FAILED")
         if [ "$RESPONSE" = "FAILED" ]; then
-          echo "Health check failed - endpoint unreachable"
+          echo "::error::Health check failed - endpoint unreachable"
           exit 1
         fi
-
         STATUS=$(echo "$RESPONSE" | jq -r '.status')
         if [ "$STATUS" != "healthy" ]; then
-          echo "Health check failed - status: $STATUS"
-          echo "Response: $RESPONSE"
+          echo "::error::Health check failed - status: $STATUS"
           exit 1
         fi
-
         echo "Health check passed"
-        echo "$RESPONSE" | jq .
