@@ -212,8 +212,14 @@ const MAX_LIMIT = 200 as const;
  */
 const CACHE_TTL_SEARCH = 3600 as const; // 1 hour for search results
 const CACHE_TTL_TOP = 1800 as const; // 30 minutes for top podcasts
+const CACHE_TTL_PODCAST_DETAIL = 3600 as const; // 1 hour for podcast details
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
 const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
+
+/**
+ * Episode limit for podcast detail response
+ */
+const PODCAST_EPISODE_LIMIT = 20 as const;
 
 /**
  * Circuit Breaker Configuration
@@ -847,6 +853,114 @@ async function topRequest(
 }
 
 /**
+ * iTunes podcast lookup API result
+ */
+interface ITunesLookupResult {
+  resultCount: number;
+  results: Array<{
+    wrapperType?: string;
+    kind?: string;
+    trackId?: number;
+    trackName?: string;
+    artworkUrl600?: string;
+    feedUrl?: string;
+    genres?: string[];
+    trackTimeMillis?: number;
+    releaseDate?: string;
+    description?: string;
+    [key: string]: unknown;
+  }>;
+}
+
+/**
+ * Podcast detail response
+ */
+interface PodcastDetailResponse {
+  podcast: {
+    trackId: number;
+    trackName: string;
+    artworkUrl600?: string;
+    feedUrl?: string;
+    genres?: string[];
+  } | null;
+  episodes: Array<{
+    trackId?: number;
+    trackName?: string;
+    releaseDate?: string;
+    trackTimeMillis?: number;
+    description?: string;
+  }>;
+}
+
+/**
+ * iTunes podcast detail API.
+ * Fetches podcast metadata and recent episodes using the lookup API.
+ *
+ * @param podcastId - The iTunes podcast ID
+ * @param ctx - Execution context for background tasks
+ * @returns Promise containing the podcast details and episodes with cache info
+ * @throws Response with 404 status if podcast not found
+ */
+async function podcastDetailRequest(
+  podcastId: number,
+  ctx?: ExecutionContext
+): Promise<{ data: PodcastDetailResponse; cacheHit: boolean }> {
+  // Fetch podcast with episodes using lookup API
+  const lookupUrl = `${HOSTNAME}/lookup?id=${podcastId}&entity=podcastEpisode&limit=${PODCAST_EPISODE_LIMIT}`;
+  const { response, cacheHit } = await cachedFetch(lookupUrl, CACHE_TTL_PODCAST_DETAIL, ctx);
+
+  // Check if response indicates an error
+  if (response.status >= 400) {
+    throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
+  }
+
+  const lookupResult = (await response.json()) as ITunesLookupResult;
+
+  // Check if podcast exists (first result should be the podcast itself)
+  if (lookupResult.resultCount === 0 || lookupResult.results.length === 0) {
+    throw new Response('Podcast not found', {
+      status: 404,
+      statusText: 'Not Found',
+    });
+  }
+
+  // First result is the podcast, rest are episodes
+  const podcastData = lookupResult.results.find(
+    (r) => r.wrapperType === 'track' && r.kind === 'podcast'
+  );
+
+  if (!podcastData) {
+    throw new Response('Podcast not found', {
+      status: 404,
+      statusText: 'Not Found',
+    });
+  }
+
+  const episodes = lookupResult.results
+    .filter((r) => r.wrapperType === 'track' && r.kind === 'podcast-episode')
+    .map((ep) => ({
+      trackId: ep.trackId,
+      trackName: ep.trackName,
+      releaseDate: ep.releaseDate,
+      trackTimeMillis: ep.trackTimeMillis,
+      description: ep.description,
+    }));
+
+  const podcastResponse: PodcastDetailResponse = {
+    podcast: {
+      trackId: podcastData.trackId!,
+      trackName: podcastData.trackName!,
+      artworkUrl600: podcastData.artworkUrl600,
+      feedUrl: podcastData.feedUrl,
+      genres: podcastData.genres,
+    },
+    episodes,
+  };
+
+  return { data: podcastResponse, cacheHit };
+}
+
+/**
  * Health check response - basic liveness
  */
 function handleHealthCheck(request: Request): Response {
@@ -1242,6 +1356,97 @@ function getApiSchema(): OpenAPIV3.Document {
           },
         },
       },
+      '/podcast/{id}': {
+        get: {
+          summary: 'Podcast Detail',
+          description:
+            'Returns detailed information about a specific podcast including recent episodes.',
+          operationId: 'podcastDetail',
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              description: 'The iTunes podcast ID',
+              required: true,
+              schema: {
+                type: 'integer',
+                example: 1535809341,
+              },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Podcast details with episodes',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      podcast: {
+                        type: 'object',
+                        properties: {
+                          trackId: { type: 'integer', description: 'iTunes podcast ID' },
+                          trackName: { type: 'string', description: 'Podcast name' },
+                          artworkUrl600: { type: 'string', description: 'Podcast artwork URL' },
+                          feedUrl: { type: 'string', description: 'RSS feed URL' },
+                          genres: {
+                            type: 'array',
+                            items: { type: 'string' },
+                            description: 'Podcast genres',
+                          },
+                        },
+                      },
+                      episodes: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            trackId: { type: 'integer', description: 'Episode ID' },
+                            trackName: { type: 'string', description: 'Episode title' },
+                            releaseDate: {
+                              type: 'string',
+                              format: 'date-time',
+                              description: 'Episode release date',
+                            },
+                            trackTimeMillis: {
+                              type: 'integer',
+                              description: 'Episode duration in milliseconds',
+                            },
+                            description: { type: 'string', description: 'Episode description' },
+                          },
+                        },
+                        description: 'List of recent episodes (up to 20)',
+                      },
+                    },
+                  },
+                },
+              },
+              headers: {
+                'Cache-Control': {
+                  description: 'Cache duration: 1 hour',
+                  schema: {
+                    type: 'string',
+                    example: 'public, max-age=3600',
+                  },
+                },
+                'X-Cache': {
+                  description: 'Cache hit indicator',
+                  schema: {
+                    type: 'string',
+                    enum: ['HIT', 'MISS'],
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Invalid podcast ID',
+            },
+            '404': {
+              description: 'Podcast not found',
+            },
+          },
+        },
+      },
     },
   };
 }
@@ -1417,6 +1622,51 @@ export default {
             },
           }
         );
+      }
+
+      // Podcast detail endpoint: /podcast/:id
+      const podcastMatch = pathname.match(/^\/podcast\/(\d+)$/);
+      if (podcastMatch) {
+        const podcastId = parseInt(podcastMatch[1], 10);
+
+        // Validate podcast ID
+        if (isNaN(podcastId) || podcastId <= 0) {
+          log('warn', 'Invalid podcast ID', { requestId, podcastId: podcastMatch[1] });
+          return createErrorResponse('Invalid podcast ID', 400, 'Bad Request');
+        }
+
+        const { data, cacheHit } = await podcastDetailRequest(podcastId, ctx);
+        const duration = Date.now() - startTime;
+
+        log('info', 'Podcast detail request', {
+          requestId,
+          path: pathname,
+          podcastId,
+          episodeCount: data.episodes.length,
+          duration,
+          cacheHit,
+          status: 200,
+        });
+        trackMetrics(env, 'podcastDetail', cacheHit, 200, duration, colo, data.episodes.length);
+
+        // Export to R2 data lake (non-blocking)
+        if (env.ANALYTICS_LAKE) {
+          const analyticsEvent = createAnalyticsEvent(
+            requestId,
+            'podcastDetail',
+            cacheHit,
+            200,
+            duration,
+            colo,
+            {
+              resultCount: data.episodes.length,
+              country: (request.cf?.country as string) ?? undefined,
+            }
+          );
+          ctx.waitUntil(exportAnalyticsEvent(env, analyticsEvent));
+        }
+
+        return handleRequest(() => Promise.resolve(data), CACHE_TTL_PODCAST_DETAIL, cacheHit);
       }
 
       // Rate limiting (if binding available)

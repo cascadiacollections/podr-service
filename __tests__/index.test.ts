@@ -1450,4 +1450,343 @@ describe('Podr Service Worker', () => {
       expect(eventData).toHaveProperty('durationMs');
     });
   });
+
+  describe('podcast detail endpoint', () => {
+    const mockPodcastLookupResponse = {
+      resultCount: 3,
+      results: [
+        {
+          wrapperType: 'track',
+          kind: 'podcast',
+          trackId: 1535809341,
+          trackName: 'Test Podcast',
+          artworkUrl600: 'https://example.com/artwork.jpg',
+          feedUrl: 'https://example.com/feed.xml',
+          genres: ['Technology', 'News'],
+        },
+        {
+          wrapperType: 'track',
+          kind: 'podcast-episode',
+          trackId: 1000000001,
+          trackName: 'Episode 1',
+          releaseDate: '2026-01-20T00:00:00Z',
+          trackTimeMillis: 3600000,
+          description: 'First episode description',
+        },
+        {
+          wrapperType: 'track',
+          kind: 'podcast-episode',
+          trackId: 1000000002,
+          trackName: 'Episode 2',
+          releaseDate: '2026-01-15T00:00:00Z',
+          trackTimeMillis: 2400000,
+          description: 'Second episode description',
+        },
+      ],
+    };
+
+    beforeEach(() => {
+      const mockCache = {
+        match: jest.fn(() => Promise.resolve(undefined)),
+        put: jest.fn(() => Promise.resolve()),
+      };
+
+      global.caches = {
+        default: mockCache,
+      } as unknown as CacheStorage;
+    });
+
+    test('should return podcast details with episodes', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json;charset=UTF-8');
+
+      const body = await response.json();
+      expect(body).toHaveProperty('podcast');
+      expect(body).toHaveProperty('episodes');
+
+      expect(body.podcast).toEqual({
+        trackId: 1535809341,
+        trackName: 'Test Podcast',
+        artworkUrl600: 'https://example.com/artwork.jpg',
+        feedUrl: 'https://example.com/feed.xml',
+        genres: ['Technology', 'News'],
+      });
+
+      expect(body.episodes).toHaveLength(2);
+      expect(body.episodes[0]).toEqual({
+        trackId: 1000000001,
+        trackName: 'Episode 1',
+        releaseDate: '2026-01-20T00:00:00Z',
+        trackTimeMillis: 3600000,
+        description: 'First episode description',
+      });
+    });
+
+    test('should return 404 for unknown podcast ID', async () => {
+      const url = 'http://localhost:8787/podcast/9999999999';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve({ resultCount: 0, results: [] }),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(404);
+      expect(response.statusText).toBe('Not Found');
+    });
+
+    test('should return 400 for invalid podcast ID format', async () => {
+      const url = 'http://localhost:8787/podcast/abc';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      // Should not match the /podcast/:id pattern with non-numeric ID
+      expect(response.status).toBe(400);
+    });
+
+    test('should return 400 for negative podcast ID', async () => {
+      const url = 'http://localhost:8787/podcast/-123';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      // Should not match the /podcast/:id pattern with negative ID
+      expect(response.status).toBe(400);
+    });
+
+    test('should cache podcast detail response for 1 hour', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.headers.get('Cache-Control')).toContain('max-age=3600');
+    });
+
+    test('should return X-Cache: MISS on first request', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.headers.get('X-Cache')).toBe('MISS');
+    });
+
+    test('should return X-Cache: HIT when cached', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      const cachedData = mockPodcastLookupResponse;
+      const mockCache = {
+        match: jest.fn(() =>
+          Promise.resolve(
+            new Response(JSON.stringify(cachedData), {
+              headers: { 'Content-Type': 'application/json' },
+            })
+          )
+        ),
+        put: jest.fn(() => Promise.resolve()),
+      };
+
+      global.caches = {
+        default: mockCache,
+      } as unknown as CacheStorage;
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.headers.get('X-Cache')).toBe('HIT');
+    });
+
+    test('should include /podcast/{id} in schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+      const schema = await response.json();
+
+      expect(schema.paths).toHaveProperty('/podcast/{id}');
+      expect(schema.paths['/podcast/{id}'].get).toHaveProperty('summary', 'Podcast Detail');
+      expect(schema.paths['/podcast/{id}'].get).toHaveProperty('operationId', 'podcastDetail');
+    });
+
+    test('should include security headers in response', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+      expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+      expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
+    });
+
+    test('should handle podcast with no episodes', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      const podcastOnlyResponse = {
+        resultCount: 1,
+        results: [
+          {
+            wrapperType: 'track',
+            kind: 'podcast',
+            trackId: 1535809341,
+            trackName: 'Podcast With No Episodes',
+            artworkUrl600: 'https://example.com/artwork.jpg',
+          },
+        ],
+      };
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(podcastOnlyResponse),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.episodes).toHaveLength(0);
+    });
+
+    test('should handle iTunes API errors gracefully', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(500);
+    });
+
+    test('should export podcast detail events to R2', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastLookupResponse),
+        } as unknown as Response)
+      );
+
+      const mockR2 = {
+        put: jest.fn(() =>
+          Promise.resolve({ key: 'test', size: 100, etag: 'abc', uploaded: new Date() })
+        ),
+        get: jest.fn(() => Promise.resolve(null)),
+        list: jest.fn(() => Promise.resolve({ objects: [], truncated: false })),
+        head: jest.fn(() => Promise.resolve(null)),
+      };
+
+      const mockEnvWithR2 = {
+        ANALYTICS_LAKE: mockR2,
+      };
+
+      const mockCtxForR2 = {
+        waitUntil: jest.fn(),
+        passThroughOnException: jest.fn(),
+      } as unknown as ExecutionContext;
+
+      await worker.fetch(request, mockEnvWithR2, mockCtxForR2);
+
+      expect(mockCtxForR2.waitUntil).toHaveBeenCalled();
+    });
+  });
 });
