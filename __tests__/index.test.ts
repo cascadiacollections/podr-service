@@ -241,7 +241,7 @@ describe('Podr Service Worker', () => {
       const cacheControl = response.headers.get('Cache-Control');
 
       expect(cacheControl).toContain('public');
-      expect(cacheControl).toContain('max-age=3600'); // 1 hour for search
+      expect(cacheControl).toContain('max-age=86400'); // 24 hours for search
     });
 
     test('should set appropriate Cache-Control headers for top podcasts', async () => {

@@ -277,7 +277,7 @@ const MAX_LIMIT = 200 as const;
 /**
  * Cache TTL Configuration (in seconds)
  */
-const CACHE_TTL_SEARCH = 3600 as const; // 1 hour for search results
+const CACHE_TTL_SEARCH = 86400 as const; // 24 hours for search results
 const CACHE_TTL_TOP = 1800 as const; // 30 minutes for top podcasts
 const CACHE_TTL_PODCAST_DETAIL = 3600 as const; // 1 hour for podcast details
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
@@ -975,10 +975,11 @@ async function handleRequest(
 }
 
 /**
- * iTunes search API.
+ * Search podcasts using Podcast Index (when feature flagged) or iTunes API.
  *
  * @param query - The search query term
  * @param limit - The number of results to return (default: 15)
+ * @param env - Environment bindings
  * @param ctx - Execution context for background tasks
  * @returns Promise containing the search results and cache info
  * @throws Response with 400 status if query is empty
@@ -986,6 +987,7 @@ async function handleRequest(
 async function searchRequest(
   query: string | undefined,
   limit: number,
+  env: Env,
   ctx?: ExecutionContext
 ): Promise<{ data: unknown; cacheHit: boolean }> {
   if (!query) {
@@ -995,6 +997,14 @@ async function searchRequest(
     });
   }
 
+  // Check feature flag for Podcast Index
+  const usePodcastIndex = await getFlag(env, 'podcastIndex');
+
+  if (usePodcastIndex && env.PODCAST_INDEX_KEY && env.PODCAST_INDEX_SECRET) {
+    return podcastIndexSearch(query, limit, env, ctx);
+  }
+
+  // Fallback to iTunes API
   const route = 'search';
   const mediaType = 'podcast';
   const searchUrl = `${HOSTNAME}/${route}?media=${mediaType}&term=${encodeURIComponent(query)}&limit=${limit}`;
@@ -1010,27 +1020,132 @@ async function searchRequest(
 
 /**
  * iTunes top podcasts API.
+ * Uses Cloudflare Workers Container to proxy requests, avoiding 403 from Apple.
  *
  * @param limit - The number of results to return (default: 15)
  * @param genre - The genre ID filter to apply (optional)
+ * @param env - Environment bindings containing container reference
  * @param ctx - Execution context for background tasks
  * @returns Promise containing the top podcasts feed and cache info
  */
 async function topRequest(
   limit: number,
   genre: number,
+  env: Env,
   ctx?: ExecutionContext
 ): Promise<{ data: unknown; cacheHit: boolean }> {
   const genreSegment = ITUNES_API_GENRES[genre] ? `/genre=${genre}` : '';
   const topPodcastsUrl = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}${genreSegment}/json`;
-  const { response, cacheHit } = await cachedFetch(topPodcastsUrl, CACHE_TTL_TOP, ctx);
 
-  // Check if response indicates an error
-  if (response.status >= 400) {
+  // Check cache first
+  const cache = caches.default;
+  const cacheKey = new Request(topPodcastsUrl, { method: 'GET' });
+
+  // Check circuit breaker
+  if (isCircuitOpen()) {
+    const staleResponse = await cache.match(cacheKey);
+    if (staleResponse) {
+      log('warn', 'Circuit open, serving stale cache', { url: topPodcastsUrl });
+      const data = await staleResponse.json();
+      return { data, cacheHit: true };
+    }
+    throw new Error('Service temporarily unavailable');
+  }
+
+  // Try cache
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) {
+    const age = cachedResponse.headers.get('age');
+    const ageSeconds = age ? parseInt(age, 10) : 0;
+
+    if (ageSeconds > CACHE_TTL_TOP && ageSeconds < CACHE_STALE_TOLERANCE && ctx) {
+      ctx.waitUntil(revalidateTopPodcastsCache(topPodcastsUrl, env, cache, cacheKey));
+      log('info', 'Serving stale, revalidating in background', { url: topPodcastsUrl, ageSeconds });
+    }
+
+    const data = await cachedResponse.json();
+    return { data, cacheHit: true };
+  }
+
+  // Fetch via container proxy (or direct fetch as fallback)
+  let response: Response;
+
+  if (env.ITUNES_PROXY) {
+    // Use container to fetch from iTunes (avoids 403)
+    const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+    const container = env.ITUNES_PROXY.get(containerId);
+    const proxyUrl = `/?url=${encodeURIComponent(topPodcastsUrl)}`;
+    response = await container.fetch(proxyUrl);
+  } else {
+    // Fallback to direct fetch (may get 403)
+    log('warn', 'ITUNES_PROXY not available, using direct fetch', { url: topPodcastsUrl });
+    response = await fetch(topPodcastsUrl);
+  }
+
+  if (!response.ok) {
+    recordFailure();
     throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
   }
 
-  return { data: await response.json(), cacheHit };
+  recordSuccess();
+
+  const data = await response.json();
+
+  // Cache the response
+  const responseToCache = new Response(JSON.stringify(data), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': `public, max-age=${CACHE_TTL_TOP}`,
+    },
+  });
+  void cache.put(cacheKey, responseToCache);
+
+  return { data, cacheHit: false };
+}
+
+/**
+ * Revalidates top podcasts cache entry in background via container proxy
+ */
+async function revalidateTopPodcastsCache(
+  url: string,
+  env: Env,
+  cache: Cache,
+  cacheKey: Request
+): Promise<void> {
+  try {
+    let response: Response;
+
+    if (env.ITUNES_PROXY) {
+      const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+      const container = env.ITUNES_PROXY.get(containerId);
+      const proxyUrl = `/?url=${encodeURIComponent(url)}`;
+      response = await container.fetch(proxyUrl);
+    } else {
+      response = await fetch(url);
+    }
+
+    if (response.ok) {
+      recordSuccess();
+      const data = await response.json();
+      const cachedResponse = new Response(JSON.stringify(data), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `public, max-age=${CACHE_TTL_TOP}`,
+        },
+      });
+      await cache.put(cacheKey, cachedResponse);
+      log('info', 'Top podcasts cache revalidated', { url });
+    } else {
+      recordFailure();
+      log('warn', 'Top podcasts cache revalidation failed', { url, status: response.status });
+    }
+  } catch (error) {
+    recordFailure();
+    log('error', 'Top podcasts cache revalidation error', {
+      url,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 }
 
 /**
@@ -1924,7 +2039,7 @@ export default {
 
       // Handle top podcasts request
       if (query === RESERVED_PARAM_TOPPODCASTS) {
-        const { data, cacheHit } = await topRequest(limit, genre, ctx);
+        const { data, cacheHit } = await topRequest(limit, genre, env, ctx);
         const duration = Date.now() - startTime;
         const feed = data as { feed?: { entry?: unknown[] } };
         const resultCount = feed?.feed?.entry?.length ?? 0;
@@ -1963,7 +2078,7 @@ export default {
       }
 
       // Handle search request
-      const { data, cacheHit } = await searchRequest(query, limit, ctx);
+      const { data, cacheHit } = await searchRequest(query, limit, env, ctx);
       const duration = Date.now() - startTime;
       const results = data as { resultCount?: number };
       const resultCount = results?.resultCount ?? 0;
@@ -2030,5 +2145,44 @@ export default {
       trackMetrics(env, 'error', false, 500, duration, colo);
       return createErrorResponse(errorMessage, 500, 'Internal Server Error');
     }
+  },
+
+  /**
+   * Scheduled handler for cache pre-warming.
+   * Runs on cron schedule defined in wrangler.toml to pre-warm cache with popular queries.
+   */
+  async scheduled(
+    _event: ScheduledEvent,
+    env: Env,
+    ctx: ExecutionContext
+  ): Promise<void> {
+    const popularQueries = [
+      'news',
+      'comedy',
+      'true crime',
+      'technology',
+      'business',
+      'health',
+      'sports',
+      'music',
+      'science',
+      'history',
+    ];
+
+    log('info', 'Cache pre-warming started', { queryCount: popularQueries.length });
+
+    const warmupPromises = popularQueries.map(async (query) => {
+      try {
+        await searchRequest(query, 25, env, ctx);
+        log('info', 'Cache warmed', { query });
+      } catch (error) {
+        log('warn', 'Cache warming failed', {
+          query,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    });
+
+    ctx.waitUntil(Promise.allSettled(warmupPromises));
   },
 };
