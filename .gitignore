@@ -130,4 +130,4 @@ dist
 .pnp.*
 
 # Wrangler
-.wrangler/
+.wrangler/.claude/
