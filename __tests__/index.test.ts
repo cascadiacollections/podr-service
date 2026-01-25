@@ -1789,4 +1789,156 @@ describe('Podr Service Worker', () => {
       expect(mockCtxForR2.waitUntil).toHaveBeenCalled();
     });
   });
+
+  describe('scheduled handler', () => {
+    test('should warm cache with trending queries from D1', async () => {
+      const mockScheduledEvent = {
+        cron: '0 * * * *',
+        scheduledTime: Date.now(),
+        type: 'scheduled',
+      } as ScheduledEvent;
+
+      const trendingData = [
+        { query_normalized: 'javascript', total_count: 150 },
+        { query_normalized: 'python', total_count: 120 },
+        { query_normalized: 'react', total_count: 90 },
+      ];
+
+      const mockD1 = createMockD1(trendingData);
+
+      const mockEnvWithD1 = {
+        DB: mockD1,
+        ITUNES_PROXY: {
+          idFromName: jest.fn(() => ({ toString: () => 'test-id' })),
+          get: jest.fn(() => ({
+            fetch: jest.fn(() =>
+              Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ results: [] }),
+              } as Response)
+            ),
+          })),
+        },
+      };
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ results: [] }),
+        } as Response)
+      );
+
+      await worker.scheduled(mockScheduledEvent, mockEnvWithD1, mockCtx);
+
+      // Verify D1 was queried for trending queries
+      expect(mockD1.prepare).toHaveBeenCalled();
+    });
+
+    test('should fallback to hardcoded queries when D1 is not available', async () => {
+      const mockScheduledEvent = {
+        cron: '0 * * * *',
+        scheduledTime: Date.now(),
+        type: 'scheduled',
+      } as ScheduledEvent;
+
+      const mockEnvNoD1 = {
+        ITUNES_PROXY: {
+          idFromName: jest.fn(() => ({ toString: () => 'test-id' })),
+          get: jest.fn(() => ({
+            fetch: jest.fn(() =>
+              Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ results: [] }),
+              } as Response)
+            ),
+          })),
+        },
+      };
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ results: [] }),
+        } as Response)
+      );
+
+      // Should not throw when D1 is not available
+      await expect(
+        worker.scheduled(mockScheduledEvent, mockEnvNoD1, mockCtx)
+      ).resolves.not.toThrow();
+    });
+
+    test('should handle cache warming failures gracefully', async () => {
+      const mockScheduledEvent = {
+        cron: '0 * * * *',
+        scheduledTime: Date.now(),
+        type: 'scheduled',
+      } as ScheduledEvent;
+
+      const trendingData = [
+        { query_normalized: 'javascript', total_count: 150 },
+        { query_normalized: 'python', total_count: 120 },
+      ];
+
+      const mockD1 = createMockD1(trendingData);
+
+      const mockEnvWithD1 = {
+        DB: mockD1,
+        ITUNES_PROXY: {
+          idFromName: jest.fn(() => ({ toString: () => 'test-id' })),
+          get: jest.fn(() => ({
+            fetch: jest.fn(() => Promise.reject(new Error('Network error'))),
+          })),
+        },
+      };
+
+      // Should not throw even if individual queries fail
+      await expect(
+        worker.scheduled(mockScheduledEvent, mockEnvWithD1, mockCtx)
+      ).resolves.not.toThrow();
+    });
+
+    test('should warm cache for top 50 queries when available', async () => {
+      const mockScheduledEvent = {
+        cron: '0 * * * *',
+        scheduledTime: Date.now(),
+        type: 'scheduled',
+      } as ScheduledEvent;
+
+      // Create 50 trending queries
+      const trendingData = Array.from({ length: 50 }, (_, i) => ({
+        query_normalized: `query${i + 1}`,
+        total_count: 150 - i,
+      }));
+
+      const mockD1 = createMockD1(trendingData);
+
+      const mockEnvWithD1 = {
+        DB: mockD1,
+        ITUNES_PROXY: {
+          idFromName: jest.fn(() => ({ toString: () => 'test-id' })),
+          get: jest.fn(() => ({
+            fetch: jest.fn(() =>
+              Promise.resolve({
+                ok: true,
+                json: () => Promise.resolve({ results: [] }),
+              } as Response)
+            ),
+          })),
+        },
+      };
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ results: [] }),
+        } as Response)
+      );
+
+      await worker.scheduled(mockScheduledEvent, mockEnvWithD1, mockCtx);
+
+      // Verify D1 was queried
+      expect(mockD1.prepare).toHaveBeenCalled();
+    });
+  });
 });

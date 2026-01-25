@@ -81,7 +81,7 @@
 
   // Scheduled triggers for cache pre-warming
   "triggers": {
-    "crons": ["0 */6 * * *"] // Run every 6 hours
+    "crons": ["0 * * * *"] // Run every hour
   },
 
   // Container configuration for iTunes proxy (avoids Apple blocking Worker IPs)
