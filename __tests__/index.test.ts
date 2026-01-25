@@ -1154,6 +1154,113 @@ describe('Podr Service Worker', () => {
 
       expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
     });
+
+    test('should filter trending queries by country parameter', async () => {
+      const url = 'http://localhost:8787/trending?country=US';
+      const request = new Request(url, { method: 'GET' });
+
+      // Create a mock D1 that returns country-specific data
+      const mockEnvWithCountryD1 = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:trendingQueries') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        DB: createMockD1([
+          { query_normalized: 'us podcasts', total_count: 100 },
+          { query_normalized: 'american shows', total_count: 80 },
+        ]),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithCountryD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.country).toBe('US');
+      expect(body.trending).toHaveLength(2);
+    });
+
+    test('should return global trending and country="global" when no country specified', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.country).toBe('global');
+    });
+
+    test('should validate country code format (2 letters only)', async () => {
+      const url = 'http://localhost:8787/trending?country=USA';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // Invalid country code should be ignored, returning global
+      expect(body.country).toBe('global');
+    });
+
+    test('should normalize country code to uppercase', async () => {
+      const url = 'http://localhost:8787/trending?country=us';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.country).toBe('US');
+    });
+
+    test('should fallback to global when no country-specific data exists', async () => {
+      const url = 'http://localhost:8787/trending?country=ZW';
+      const request = new Request(url, { method: 'GET' });
+
+      // Mock D1 that returns empty for country query, then returns global data
+      let callCount = 0;
+      const mockEnvWithFallbackD1 = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:trendingQueries') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        DB: {
+          prepare: jest.fn((_query: string) => ({
+            bind: jest.fn().mockReturnThis(),
+            first: jest.fn(() => Promise.resolve(null)),
+            run: jest.fn(() => Promise.resolve({ success: true, meta: { rows_written: 1 } })),
+            all: jest.fn(() => {
+              callCount++;
+              // First call (country-specific) returns empty, second call (global) returns data
+              if (callCount === 1) {
+                return Promise.resolve({ results: [], success: true });
+              }
+              return Promise.resolve({
+                results: [
+                  { query_normalized: 'global podcast', total_count: 200 },
+                  { query_normalized: 'worldwide show', total_count: 150 },
+                ],
+                success: true,
+              });
+            }),
+          })),
+          exec: jest.fn(() => Promise.resolve({ results: [], success: true })),
+        },
+      };
+
+      const response = await worker.fetch(request, mockEnvWithFallbackD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // Should still return the country in response but with global fallback data
+      expect(body.country).toBe('ZW');
+      expect(body.trending).toHaveLength(2);
+      expect(body.trending[0].query).toBe('global podcast');
+    });
   });
 
   describe('suggest (autocomplete) endpoint', () => {
