@@ -449,7 +449,7 @@ async function podcastIndexSearch(
   query: string,
   limit: number,
   env: Env,
-  ctx?: ExecutionContext
+  _ctx?: ExecutionContext
 ): Promise<{ data: ITunesSearchResponse; cacheHit: boolean }> {
   if (!env.PODCAST_INDEX_KEY || !env.PODCAST_INDEX_SECRET) {
     throw new Error('Podcast Index API credentials not configured');
@@ -1264,7 +1264,12 @@ async function podcastDetailRequest(
 ): Promise<{ data: PodcastDetailResponse; cacheHit: boolean }> {
   // Fetch podcast with episodes using lookup API via container proxy
   const lookupUrl = `${HOSTNAME}/lookup?id=${podcastId}&entity=podcastEpisode&limit=${PODCAST_EPISODE_LIMIT}`;
-  const { response, cacheHit } = await cachedFetchViaProxy(lookupUrl, CACHE_TTL_PODCAST_DETAIL, env, ctx);
+  const { response, cacheHit } = await cachedFetchViaProxy(
+    lookupUrl,
+    CACHE_TTL_PODCAST_DETAIL,
+    env,
+    ctx
+  );
 
   // Check if response indicates an error
   if (response.status >= 400) {
@@ -2223,11 +2228,7 @@ export default {
    * Scheduled handler for cache pre-warming.
    * Runs on cron schedule defined in wrangler.toml to pre-warm cache with popular queries.
    */
-  async scheduled(
-    _event: ScheduledEvent,
-    env: Env,
-    ctx: ExecutionContext
-  ): Promise<void> {
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const popularQueries = [
       'news',
       'comedy',

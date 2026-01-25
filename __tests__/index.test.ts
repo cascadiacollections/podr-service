@@ -265,7 +265,7 @@ describe('Podr Service Worker', () => {
       const cacheControl = response.headers.get('Cache-Control');
 
       expect(cacheControl).toContain('public');
-      expect(cacheControl).toContain('max-age=1800'); // 30 minutes for top podcasts
+      expect(cacheControl).toContain('max-age=7200'); // 2 hours for top podcasts
     });
 
     test('should use cache when available', async () => {
@@ -1605,7 +1605,7 @@ describe('Podr Service Worker', () => {
 
       const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
 
-      expect(response.headers.get('Cache-Control')).toContain('max-age=3600');
+      expect(response.headers.get('Cache-Control')).toContain('max-age=14400'); // 4 hours for podcast detail
     });
 
     test('should return X-Cache: MISS on first request', async () => {
