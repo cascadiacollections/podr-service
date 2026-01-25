@@ -80,3 +80,63 @@ yarn deploy
 ```
 
 Note: Manual deployment requires Wrangler authentication via `wrangler login` or environment variables.
+
+## API Endpoints
+
+Base URL: `https://podr-service.cascadiacollections.workers.dev`
+
+### Podcast Search
+
+```
+GET /?q=<search_term>&limit=<optional>
+```
+
+- `q` (required): Search term (max 200 characters)
+- `limit` (optional): Number of results, 1-200, default 15
+
+Example: `/?q=javascript&limit=20`
+
+### Top Podcasts
+
+```
+GET /?q=toppodcasts&limit=<optional>&genre=<optional>
+```
+
+- `q=toppodcasts` (required): Reserved parameter for top podcasts
+- `limit` (optional): Number of results, 1-200, default 15
+- `genre` (optional): iTunes genre ID (e.g., 1312 for Technology)
+
+Example: `/?q=toppodcasts&limit=25&genre=1312`
+
+### Podcast Detail
+
+```
+GET /podcast/<podcast_id>
+```
+
+- `podcast_id` (required): iTunes podcast ID
+
+Example: `/podcast/1535809341`
+
+### Health Checks
+
+```
+GET /health       # Basic health check
+GET /health/deep  # Deep health check with upstream connectivity test
+```
+
+### Trending & Suggestions (Feature-Flagged)
+
+```
+GET /trending?limit=<optional>   # Trending search queries
+GET /suggest?q=<prefix>&limit=<optional>  # Autocomplete suggestions
+```
+
+## Architecture
+
+All iTunes API calls are routed through a Cloudflare Workers Container proxy to avoid IP-based blocking from Apple. The service includes:
+
+- Circuit breaker pattern for fault tolerance
+- Response caching at the edge
+- Rate limiting (100 requests per 60 seconds)
+- R2 analytics data lake for search trends

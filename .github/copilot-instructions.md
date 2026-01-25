@@ -98,6 +98,23 @@ yarn build
 - Use efficient data structures
 - Avoid blocking operations in the main request path
 
+## Architecture Notes
+
+### iTunes Proxy
+
+All iTunes API calls are routed through a Cloudflare Workers Container (`ITunesProxy`) to avoid IP-based blocking from Apple. The proxy:
+
+- Routes requests through: `http://container/?url=<encoded_url>`
+- Falls back to direct fetch if container is unavailable
+- Handles search, top podcasts, and podcast lookup endpoints
+
+### Key Services
+
+- **Circuit Breaker**: Fault tolerance pattern for upstream API failures
+- **Response Caching**: Edge caching with configurable TTLs per endpoint type
+- **Rate Limiting**: 100 requests per 60 seconds per client
+- **Analytics**: R2 data lake for search query trends
+
 ## CI/CD
 
 - GitHub Actions run on push and pull requests

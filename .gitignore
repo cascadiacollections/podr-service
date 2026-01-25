@@ -130,4 +130,7 @@ dist
 .pnp.*
 
 # Wrangler
-.wrangler/.claude/
+.wrangler/
+
+# Claude Code
+.claude/
