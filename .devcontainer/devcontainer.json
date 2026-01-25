@@ -1,10 +1,11 @@
 {
-  "name": "Node.js Development",
+  "name": "Podr Service Development",
   "image": "mcr.microsoft.com/devcontainers/javascript-node:24",
   "features": {
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/go:1": {}
   },
   "customizations": {
     "vscode": {
@@ -20,11 +21,17 @@
         "github.vscode-github-actions",
         "ms-azuretools.vscode-docker",
         "redhat.vscode-yaml",
-        "ms-vscode.vscode-json"
-      ]
+        "ms-vscode.vscode-json",
+        "cloudflare.cloudflare-workers-bindings-extension"
+      ],
+      "settings": {
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.formatOnSave": true,
+        "typescript.preferences.importModuleSpecifier": "relative"
+      }
     }
   },
-  "postCreateCommand": "yarn install && yarn build",
+  "postCreateCommand": "corepack enable && yarn install && yarn build",
   "remoteUser": "node",
   "forwardPorts": [8787],
   "portsAttributes": {

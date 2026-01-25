@@ -42,13 +42,19 @@ jobs:
         sparse-checkout: |
           src
           __tests__
+          __mocks__
           package.json
           yarn.lock
           tsconfig.json
           jest.config.js
-          eslint.config.mjs
+          eslint.config.js
           .prettierrc
+          .yarn
+          .yarnrc.yml
         sparse-checkout-cone-mode: false
+
+    - name: Enable Corepack
+      run: corepack enable
 
     - name: Setup Node.js
       uses: actions/setup-node@v6
@@ -57,7 +63,7 @@ jobs:
         cache: 'yarn'
 
     - name: Install dependencies
-      run: yarn install --frozen-lockfile --prefer-offline
+      run: yarn install --immutable
 
     - name: Lint and test
       run: |
