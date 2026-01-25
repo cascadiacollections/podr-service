@@ -1,4 +1,21 @@
 import type { OpenAPIV3 } from 'openapi-types';
+import { Container } from 'cloudflare:container';
+
+/**
+ * Durable Object namespace binding for containers
+ */
+interface DurableObjectNamespace {
+  idFromName: (name: string) => DurableObjectId;
+  get: (id: DurableObjectId) => DurableObjectStub;
+}
+
+interface DurableObjectId {
+  toString: () => string;
+}
+
+interface DurableObjectStub {
+  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+}
 
 /**
  * Function type for API calls that return a Promise of unknown data
@@ -159,6 +176,7 @@ interface FeatureFlags {
   semanticSearch: boolean;
   enhancedCaching: boolean;
   analyticsExport: boolean;
+  podcastIndex: boolean;
 }
 
 /**
@@ -169,6 +187,7 @@ const DEFAULT_FLAGS: FeatureFlags = {
   semanticSearch: false,
   enhancedCaching: false,
   analyticsExport: false,
+  podcastIndex: false,
 };
 
 /**
@@ -182,6 +201,9 @@ interface Env {
   FLAGS?: KVNamespace;
   DB?: D1Database;
   ANALYTICS_LAKE?: R2Bucket;
+  ITUNES_PROXY?: DurableObjectNamespace;
+  PODCAST_INDEX_KEY?: string;
+  PODCAST_INDEX_SECRET?: string;
 }
 
 /**
@@ -198,7 +220,52 @@ interface CircuitBreakerState {
  */
 const SEARCH_LIMIT = 15 as const;
 const HOSTNAME = 'https://itunes.apple.com' as const;
+const PODCAST_INDEX_HOSTNAME = 'https://api.podcastindex.org' as const;
 const RESERVED_PARAM_TOPPODCASTS = 'toppodcasts' as const;
+
+/**
+ * Podcast Index API types
+ */
+interface PodcastIndexFeed {
+  id: number;
+  title: string;
+  url: string;
+  originalUrl: string;
+  link: string;
+  description: string;
+  author: string;
+  ownerName: string;
+  image: string;
+  artwork: string;
+  lastUpdateTime: number;
+  language: string;
+  categories: Record<string, string>;
+}
+
+interface PodcastIndexSearchResponse {
+  status: string;
+  feeds: PodcastIndexFeed[];
+  count: number;
+  query: string;
+  description: string;
+}
+
+interface ITunesSearchResult {
+  collectionId: number;
+  collectionName: string;
+  feedUrl: string;
+  artworkUrl600: string;
+  artistName: string;
+  collectionViewUrl: string;
+  trackCount: number;
+  genres: string[];
+  releaseDate: string;
+}
+
+interface ITunesSearchResponse {
+  resultCount: number;
+  results: ITunesSearchResult[];
+}
 
 /**
  * Validation Constants
@@ -330,6 +397,120 @@ async function hashQuery(query: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Generates Podcast Index API authentication headers
+ */
+async function generatePodcastIndexAuth(
+  apiKey: string,
+  apiSecret: string
+): Promise<{ 'X-Auth-Key': string; 'X-Auth-Date': string; Authorization: string }> {
+  const unixTime = Math.floor(Date.now() / 1000);
+  const authString = `${apiKey}${apiSecret}${unixTime}`;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(authString);
+  const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const authHash = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return {
+    'X-Auth-Key': apiKey,
+    'X-Auth-Date': String(unixTime),
+    Authorization: authHash,
+  };
+}
+
+/**
+ * Transforms a Podcast Index feed to iTunes-compatible format
+ */
+function transformPodcastIndexFeed(feed: PodcastIndexFeed): ITunesSearchResult {
+  const genres = feed.categories ? Object.values(feed.categories) : [];
+  const releaseDate =
+    feed.lastUpdateTime && !isNaN(feed.lastUpdateTime)
+      ? new Date(feed.lastUpdateTime * 1000).toISOString()
+      : new Date().toISOString();
+  return {
+    collectionId: feed.id,
+    collectionName: feed.title,
+    feedUrl: feed.url || feed.originalUrl,
+    artworkUrl600: feed.artwork || feed.image,
+    artistName: feed.author || feed.ownerName,
+    collectionViewUrl: feed.link,
+    trackCount: 0,
+    genres,
+    releaseDate,
+  };
+}
+
+/**
+ * Searches podcasts using the Podcast Index API
+ */
+async function podcastIndexSearch(
+  query: string,
+  limit: number,
+  env: Env,
+  ctx?: ExecutionContext
+): Promise<{ data: ITunesSearchResponse; cacheHit: boolean }> {
+  if (!env.PODCAST_INDEX_KEY || !env.PODCAST_INDEX_SECRET) {
+    throw new Error('Podcast Index API credentials not configured');
+  }
+
+  const searchUrl = `${PODCAST_INDEX_HOSTNAME}/api/1.0/search/byterm?q=${encodeURIComponent(query)}&max=${limit}`;
+  const cache = caches.default;
+  const cacheKey = new Request(searchUrl, { method: 'GET' });
+
+  if (isCircuitOpen()) {
+    const staleResponse = await cache.match(cacheKey);
+    if (staleResponse) {
+      log('warn', 'Circuit open, serving stale cache', { url: searchUrl });
+      const data = (await staleResponse.json()) as ITunesSearchResponse;
+      return { data, cacheHit: true };
+    }
+    throw new Error('Service temporarily unavailable');
+  }
+
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) {
+    const data = (await cachedResponse.json()) as ITunesSearchResponse;
+    return { data, cacheHit: true };
+  }
+
+  try {
+    const authHeaders = await generatePodcastIndexAuth(
+      env.PODCAST_INDEX_KEY,
+      env.PODCAST_INDEX_SECRET
+    );
+
+    const response = await fetch(searchUrl, {
+      headers: { ...authHeaders, 'User-Agent': 'Podr/1.0' },
+    });
+
+    if (!response.ok) {
+      recordFailure();
+      throw new Error(`Podcast Index API error: ${response.status} ${response.statusText}`);
+    }
+
+    recordSuccess();
+    const podcastIndexData = (await response.json()) as PodcastIndexSearchResponse;
+
+    const itunesData: ITunesSearchResponse = {
+      resultCount: podcastIndexData.count,
+      results: podcastIndexData.feeds.map(transformPodcastIndexFeed),
+    };
+
+    const cachedResponseToStore = new Response(JSON.stringify(itunesData), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
+      },
+    });
+    void cache.put(cacheKey, cachedResponseToStore);
+
+    return { data: itunesData, cacheHit: false };
+  } catch (error) {
+    recordFailure();
+    throw error;
+  }
 }
 
 /**
@@ -1512,6 +1693,16 @@ function getClientIP(request: Request): string {
   return (
     request.headers.get('CF-Connecting-IP') ?? request.headers.get('X-Forwarded-For') ?? 'unknown'
   );
+}
+
+/**
+ * iTunes proxy container class.
+ * Uses Cloudflare Workers Containers to proxy iTunes API calls,
+ * avoiding 403 errors from Apple blocking Worker IPs.
+ */
+export class ITunesProxy extends Container {
+  defaultPort = 8080;
+  sleepAfter = '5m'; // Sleep after 5 min of inactivity
 }
 
 /**

@@ -5,6 +5,7 @@ export default {
   extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
+    '^cloudflare:container$': '<rootDir>/__mocks__/cloudflare-container.ts',
   },
   transform: {
     '^.+\\.tsx?$': [

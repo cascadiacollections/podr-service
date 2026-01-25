@@ -54,3 +54,26 @@ preview_id = "a5a0884fc5a2469f8300ab4aabad5553"
 # [[r2_buckets]]
 # binding = "ANALYTICS_LAKE"
 # bucket_name = "podr-analytics-lake"
+
+# Podcast Index API credentials (set via wrangler secret put)
+# Register at https://api.podcastindex.org/signup to get credentials
+# Run: wrangler secret put PODCAST_INDEX_KEY
+# Run: wrangler secret put PODCAST_INDEX_SECRET
+
+# Scheduled triggers for cache pre-warming
+[triggers]
+crons = ["0 */6 * * *"]  # Run every 6 hours
+
+# Container configuration for iTunes proxy (avoids Apple blocking Worker IPs)
+[[containers]]
+class_name = "ITunesProxy"
+image = "./Dockerfile"
+max_instances = 5
+
+[[durable_objects.bindings]]
+name = "ITUNES_PROXY"
+class_name = "ITunesProxy"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ITunesProxy"]
