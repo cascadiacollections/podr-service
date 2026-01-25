@@ -40,6 +40,20 @@
     ]
   },
 
+  // Workers AI binding for semantic search embeddings
+  "ai": {
+    "binding": "AI"
+  },
+
+  // Vectorize index for podcast embeddings (disabled until created)
+  // Run: wrangler vectorize create podr-podcasts --dimensions=768 --metric=cosine
+  // "vectorize": [
+  //   {
+  //     "binding": "VECTORIZE",
+  //     "index_name": "podr-podcasts"
+  //   }
+  // ],
+
   // Analytics Engine for metrics
   "analytics_engine_datasets": [
     {
