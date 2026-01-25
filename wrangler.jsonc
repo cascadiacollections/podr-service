@@ -1,0 +1,111 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "podr-service",
+  "main": "src/index.ts",
+  "tsconfig": "./tsconfig.json",
+
+  // Modern Wrangler 4 configuration - use latest date for all stability improvements
+  "compatibility_date": "2026-01-20",
+  "compatibility_flags": [
+    "nodejs_compat",
+    "nodejs_als",
+    // Experimental: pass abort signals to subrequests (iTunes API)
+    "request_signal_passthrough"
+  ],
+
+  // Workers AI/placement optimization
+  "placement": {
+    "mode": "smart"
+  },
+
+  // Observability settings with sampling for cost control
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+      "head_sampling_rate": 0.1 // 10% sampling for cost control
+    }
+  },
+
+  // Rate limiting binding
+  "unsafe": {
+    "bindings": [
+      {
+        "name": "RATE_LIMITER",
+        "type": "ratelimit",
+        "namespace_id": "1",
+        "simple": { "limit": 100, "period": 60 }
+      }
+    ]
+  },
+
+  // Analytics Engine for metrics
+  "analytics_engine_datasets": [
+    {
+      "binding": "ANALYTICS",
+      "dataset": "podr_metrics"
+    }
+  ],
+
+  // KV namespace for feature flags
+  "kv_namespaces": [
+    {
+      "binding": "FLAGS",
+      "id": "a5a0884fc5a2469f8300ab4aabad5553",
+      "preview_id": "a5a0884fc5a2469f8300ab4aabad5553"
+    }
+  ],
+
+  // D1 database for search analytics (disabled until created)
+  // "d1_databases": [
+  //   {
+  //     "binding": "DB",
+  //     "database_name": "podr-analytics",
+  //     "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+  //   }
+  // ],
+
+  // R2 bucket for analytics data lake (disabled until enabled)
+  // "r2_buckets": [
+  //   {
+  //     "binding": "ANALYTICS_LAKE",
+  //     "bucket_name": "podr-analytics-lake"
+  //   }
+  // ],
+
+  // Podcast Index API credentials (set via wrangler secret put)
+  // Register at https://api.podcastindex.org/signup
+  // Run: wrangler secret put PODCAST_INDEX_KEY
+  // Run: wrangler secret put PODCAST_INDEX_SECRET
+
+  // Scheduled triggers for cache pre-warming
+  "triggers": {
+    "crons": ["0 */6 * * *"] // Run every 6 hours
+  },
+
+  // Container configuration for iTunes proxy (avoids Apple blocking Worker IPs)
+  "containers": [
+    {
+      "class_name": "ITunesProxy",
+      "image": "./Dockerfile",
+      "max_instances": 5
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ITUNES_PROXY",
+        "class_name": "ITunesProxy"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["ITunesProxy"]
+    }
+  ]
+}

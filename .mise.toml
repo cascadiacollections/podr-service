@@ -1,2 +1,5 @@
 [tools]
 node = "24"
+
+[env]
+NODE_OPTIONS = "--experimental-vm-modules"

@@ -8,11 +8,12 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     languageOptions: {
-      ecmaVersion: 2024,
+      ecmaVersion: 'latest',
       sourceType: 'module',
       parser: tseslint.parser,
       parserOptions: {
-        project: './tsconfig.json',
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
       },
     },
     files: ['**/*.ts', '**/*.js'],
