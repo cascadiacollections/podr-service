@@ -585,6 +585,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@cascadiacollections/podr-service@workspace:."
   dependencies:
+    "@cloudflare/containers": "npm:^0.1.0"
     "@cloudflare/workers-types": "npm:4.20260124.0"
     "@eslint/js": "npm:^9.39.2"
     "@types/jest": "npm:30.0.0"
@@ -602,6 +603,13 @@ __metadata:
     wrangler: "npm:^4.60.0"
   languageName: unknown
   linkType: soft
+
+"@cloudflare/containers@npm:^0.1.0":
+  version: 0.1.0
+  resolution: "@cloudflare/containers@npm:0.1.0"
+  checksum: 10c0/4baac7748f579fb843ac55187d50ab1e5c148a11b457444f60bd036f8687592bd5352e3fd694771bc0fc2686c1df3fb7a48d45d8dd1d5b63df04b1c94f7aa92a
+  languageName: node
+  linkType: hard
 
 "@cloudflare/kv-asset-handler@npm:0.4.2":
   version: 0.4.2

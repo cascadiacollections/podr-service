@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(yarn build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(npx wrangler deploy)",
+      "Bash(git push)",
+      "Bash(docker info:*)",
+      "WebSearch",
+      "WebFetch(domain:developers.cloudflare.com)",
+      "Bash(yarn add:*)"
+    ]
+  }
+}

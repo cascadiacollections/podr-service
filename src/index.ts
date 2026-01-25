@@ -1,5 +1,5 @@
 import type { OpenAPIV3 } from 'openapi-types';
-import { Container } from 'cloudflare:container';
+import { Container } from '@cloudflare/containers';
 
 /**
  * Durable Object namespace binding for containers
