@@ -35,3 +35,9 @@ simple = { limit = 100, period = 60 }
 [[analytics_engine_datasets]]
 binding = "ANALYTICS"
 dataset = "podr_metrics"
+
+# KV namespace for feature flags
+[[kv_namespaces]]
+binding = "FLAGS"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"

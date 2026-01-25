@@ -17,6 +17,23 @@ const mockEnv = {
 // Mock environment without rate limiter
 const mockEnvNoRateLimiter = {};
 
+// Mock environment with feature flags enabled
+const mockEnvWithFlags = {
+  FLAGS: {
+    get: jest.fn((key: string) => {
+      if (key === 'flag:trendingQueries') return Promise.resolve('true');
+      return Promise.resolve(null);
+    }),
+  },
+};
+
+// Mock environment with feature flags disabled
+const mockEnvWithFlagsDisabled = {
+  FLAGS: {
+    get: jest.fn(() => Promise.resolve('false')),
+  },
+};
+
 describe('Podr Service Worker', () => {
   // Mock the cache API
   beforeEach(() => {
@@ -947,6 +964,51 @@ describe('Podr Service Worker', () => {
 
       // Pretty-printed JSON should have newlines
       expect(text).toContain('\n');
+    });
+  });
+
+  describe('feature flags', () => {
+    test('should return 404 for /trending when flag is disabled', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(404);
+    });
+
+    test('should return 404 for /trending when flag is explicitly false', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithFlagsDisabled, mockCtx);
+
+      expect(response.status).toBe(404);
+    });
+
+    test('should return 200 for /trending when flag is enabled', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithFlags, mockCtx);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json;charset=UTF-8');
+
+      const body = await response.json();
+      expect(body).toHaveProperty('trending');
+      expect(Array.isArray(body.trending)).toBe(true);
+    });
+
+    test('should include /trending in schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+      const schema = await response.json();
+
+      expect(schema.paths).toHaveProperty('/trending');
+      expect(schema.paths['/trending'].get).toHaveProperty('summary', 'Trending Queries');
     });
   });
 });

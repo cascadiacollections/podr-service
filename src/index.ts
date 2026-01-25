@@ -57,6 +57,32 @@ interface AnalyticsEngine {
 }
 
 /**
+ * KV namespace binding
+ */
+interface KVNamespace {
+  get: (key: string, options?: { type?: 'text' | 'json' }) => Promise<string | null>;
+  put: (key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>;
+}
+
+/**
+ * Feature flag configuration
+ */
+interface FeatureFlags {
+  trendingQueries: boolean;
+  semanticSearch: boolean;
+  enhancedCaching: boolean;
+}
+
+/**
+ * Default feature flags (used when KV unavailable or flag not set)
+ */
+const DEFAULT_FLAGS: FeatureFlags = {
+  trendingQueries: false,
+  semanticSearch: false,
+  enhancedCaching: false,
+};
+
+/**
  * Environment bindings for the Worker
  */
 interface Env {
@@ -64,6 +90,7 @@ interface Env {
     limit: (options: { key: string }) => Promise<{ success: boolean }>;
   };
   ANALYTICS?: AnalyticsEngine;
+  FLAGS?: KVNamespace;
 }
 
 /**
@@ -166,6 +193,25 @@ function generateRequestId(): string {
  */
 function log(level: LogLevel, message: string, context: LogContext = {}): void {
   console.log(JSON.stringify({ level, message, timestamp: Date.now(), ...context }));
+}
+
+/**
+ * Gets a single feature flag value from KV
+ *
+ * @param env - Environment bindings
+ * @param flag - Flag name
+ * @returns Flag value or default
+ */
+async function getFlag<K extends keyof FeatureFlags>(env: Env, flag: K): Promise<FeatureFlags[K]> {
+  if (!env.FLAGS) return DEFAULT_FLAGS[flag];
+
+  try {
+    const value = await env.FLAGS.get(`flag:${flag}`);
+    if (value === null) return DEFAULT_FLAGS[flag];
+    return value === 'true';
+  } catch {
+    return DEFAULT_FLAGS[flag];
+  }
 }
 
 /**
@@ -745,6 +791,41 @@ function getApiSchema(): OpenAPIV3.Document {
           },
         },
       },
+      '/trending': {
+        get: {
+          summary: 'Trending Queries',
+          description:
+            'Returns trending podcast search queries. Feature-flagged endpoint - returns 404 when disabled.',
+          operationId: 'trendingQueries',
+          responses: {
+            '200': {
+              description: 'Trending queries list',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      trending: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            query: { type: 'string' },
+                            count: { type: 'integer' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Feature not enabled',
+            },
+          },
+        },
+      },
     },
   };
 }
@@ -828,6 +909,30 @@ export default {
       }
       if (pathname === '/health/deep') {
         return await handleDeepHealthCheck(request);
+      }
+
+      // Trending queries endpoint (feature flagged)
+      if (pathname === '/trending') {
+        const trendingEnabled = await getFlag(env, 'trendingQueries');
+        if (!trendingEnabled) {
+          return createErrorResponse('Not Found', 404, 'Not Found');
+        }
+        // TODO: Implement D1 trending queries
+        const duration = Date.now() - startTime;
+        trackMetrics(env, 'trending', false, 200, duration, colo);
+        return new Response(
+          JSON.stringify({
+            trending: [],
+            message: 'Trending queries coming soon - D1 integration pending',
+          }),
+          {
+            headers: {
+              'content-type': 'application/json;charset=UTF-8',
+              'Cache-Control': 'public, max-age=300',
+              ...SECURITY_HEADERS,
+            },
+          }
+        );
       }
 
       // Rate limiting (if binding available)
