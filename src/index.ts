@@ -1,6 +1,5 @@
 import type { OpenAPIV3 } from 'openapi-types';
-// Note: Cloudflare Containers is in beta and requires explicit access
-// import { Container } from 'cloudflare:container';
+import { Container } from 'cloudflare:container';
 
 /**
  * Durable Object namespace binding for containers
@@ -1815,15 +1814,11 @@ function getClientIP(request: Request): string {
  * iTunes proxy container class.
  * Uses Cloudflare Workers Containers to proxy iTunes API calls,
  * avoiding 403 errors from Apple blocking Worker IPs.
- *
- * Note: Cloudflare Containers is in beta and requires explicit access.
- * Apply at: https://www.cloudflare.com/lp/containers/
- * Until access is granted, the worker falls back to direct iTunes API calls.
  */
-// export class ITunesProxy extends Container {
-//   defaultPort = 8080;
-//   sleepAfter = '5m'; // Sleep after 5 min of inactivity
-// }
+export class ITunesProxy extends Container {
+  defaultPort = 8080;
+  sleepAfter = '5m'; // Sleep after 5 min of inactivity
+}
 
 /**
  * Modern Module Worker export with fetch handler.
