@@ -706,7 +706,23 @@ interface SemanticSearchResponse {
 }
 
 /**
+ * Safely extracts a string value from metadata
+ * Returns undefined if the value is not a string or is undefined
+ */
+function getMetadataString(
+  metadata: Record<string, string | number | boolean> | undefined,
+  key: string
+): string | undefined {
+  if (!metadata || !(key in metadata)) {
+    return undefined;
+  }
+  const value = metadata[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
  * Generates text embeddings using Workers AI
+ * Note: Workers AI embedding models require array input format even for single texts
  *
  * @param env - Environment bindings with AI
  * @param text - Text to generate embedding for
@@ -719,9 +735,10 @@ async function generateEmbedding(env: Env, text: string): Promise<number[] | nul
   }
 
   try {
+    // Workers AI embedding models require array format for text input
     const result = await env.AI.run(SEMANTIC_SEARCH_MODEL, { text: [text] });
 
-    // Handle different response formats from Workers AI
+    // Handle response format from Workers AI
     if ('data' in result && Array.isArray(result.data) && result.data.length > 0) {
       return result.data[0];
     }
@@ -781,10 +798,10 @@ async function semanticSearchRequest(
     const results: SemanticSearchResult[] = vectorResults.matches.map((match) => ({
       id: match.id,
       score: match.score,
-      title: match.metadata?.title as string | undefined,
-      description: match.metadata?.description as string | undefined,
-      artworkUrl: match.metadata?.artworkUrl as string | undefined,
-      feedUrl: match.metadata?.feedUrl as string | undefined,
+      title: getMetadataString(match.metadata, 'title'),
+      description: getMetadataString(match.metadata, 'description'),
+      artworkUrl: getMetadataString(match.metadata, 'artworkUrl'),
+      feedUrl: getMetadataString(match.metadata, 'feedUrl'),
     }));
 
     return {
@@ -803,6 +820,23 @@ async function semanticSearchRequest(
       resultCount: 0,
     };
   }
+}
+
+/**
+ * Validates the limit parameter for semantic search
+ * Different from validateLimit as semantic search has a different maximum
+ *
+ * @param limit - The limit string to validate
+ * @returns Validated limit number
+ */
+function validateSemanticSearchLimit(limit: string | undefined): number {
+  if (!limit) return SEMANTIC_SEARCH_TOP_K;
+
+  const parsed = parseInt(limit, 10);
+  if (isNaN(parsed) || parsed < 1) {
+    return SEMANTIC_SEARCH_TOP_K;
+  }
+  return Math.min(parsed, SEMANTIC_SEARCH_TOP_K);
 }
 
 /**
@@ -2312,13 +2346,7 @@ export default {
           return createErrorResponse(queryError, 400, 'Bad Request');
         }
 
-        const limitParam = searchParams.get('limit');
-        const limit = limitParam
-          ? Math.min(
-              Math.max(parseInt(limitParam, 10) || SEMANTIC_SEARCH_TOP_K, 1),
-              SEMANTIC_SEARCH_TOP_K
-            )
-          : SEMANTIC_SEARCH_TOP_K;
+        const limit = validateSemanticSearchLimit(searchParams.get('limit') ?? undefined);
 
         const searchResult = await semanticSearchRequest(query, limit, env);
 
