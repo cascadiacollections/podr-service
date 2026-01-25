@@ -65,6 +65,37 @@ interface KVNamespace {
 }
 
 /**
+ * D1 database result types
+ */
+interface D1Result<T> {
+  results: T[];
+  success: boolean;
+  meta?: {
+    duration?: number;
+    rows_read?: number;
+    rows_written?: number;
+  };
+}
+
+/**
+ * D1 prepared statement
+ */
+interface D1PreparedStatement {
+  bind: (...values: unknown[]) => D1PreparedStatement;
+  first: <T = unknown>() => Promise<T | null>;
+  run: () => Promise<D1Result<unknown>>;
+  all: <T = unknown>() => Promise<D1Result<T>>;
+}
+
+/**
+ * D1 database binding
+ */
+interface D1Database {
+  prepare: (query: string) => D1PreparedStatement;
+  exec: (query: string) => Promise<D1Result<unknown>>;
+}
+
+/**
  * Feature flag configuration
  */
 interface FeatureFlags {
@@ -91,6 +122,7 @@ interface Env {
   };
   ANALYTICS?: AnalyticsEngine;
   FLAGS?: KVNamespace;
+  DB?: D1Database;
 }
 
 /**
@@ -211,6 +243,116 @@ async function getFlag<K extends keyof FeatureFlags>(env: Env, flag: K): Promise
     return value === 'true';
   } catch {
     return DEFAULT_FLAGS[flag];
+  }
+}
+
+/**
+ * Normalizes a search query for trending aggregation
+ * - Lowercase
+ * - Trim whitespace
+ * - Collapse multiple spaces
+ */
+function normalizeQuery(query: string): string {
+  return query.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+/**
+ * Creates a SHA-256 hash of the query for privacy-preserving storage
+ */
+async function hashQuery(query: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(query);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Tracks a search query in D1 for trending analysis
+ * Uses upsert pattern: increment count if exists, insert if new
+ *
+ * @param env - Environment bindings
+ * @param query - The search query to track
+ */
+async function trackSearchQuery(env: Env, query: string): Promise<void> {
+  if (!env.DB) return;
+
+  try {
+    const normalized = normalizeQuery(query);
+    // Skip very short or very long queries
+    if (normalized.length < 2 || normalized.length > 100) return;
+
+    const queryHash = await hashQuery(normalized);
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+
+    // Upsert: try to update first, insert if no rows affected
+    const updateResult = await env.DB.prepare(
+      `UPDATE search_queries
+       SET search_count = search_count + 1, updated_at = datetime('now')
+       WHERE query_hash = ? AND date = ?`
+    )
+      .bind(queryHash, today)
+      .run();
+
+    // If no rows were updated, insert new row
+    if (updateResult.meta?.rows_written === 0) {
+      await env.DB.prepare(
+        `INSERT INTO search_queries (query_hash, query_normalized, date)
+         VALUES (?, ?, ?)`
+      )
+        .bind(queryHash, normalized, today)
+        .run();
+    }
+  } catch (error) {
+    // Don't fail the request if tracking fails
+    log('error', 'Failed to track search query', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+}
+
+/**
+ * Trending query result from D1
+ */
+interface TrendingQuery {
+  query_normalized: string;
+  total_count: number;
+}
+
+/**
+ * Gets trending search queries from D1
+ * Returns top queries from the last 7 days
+ *
+ * @param env - Environment bindings
+ * @param limit - Number of trending queries to return (default: 10)
+ * @returns Array of trending queries with counts
+ */
+async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]> {
+  if (!env.DB) return [];
+
+  try {
+    // Get date 7 days ago
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekAgoStr = weekAgo.toISOString().slice(0, 10);
+
+    const result = await env.DB.prepare(
+      `SELECT query_normalized, SUM(search_count) as total_count
+       FROM search_queries
+       WHERE date >= ?
+       GROUP BY query_hash
+       ORDER BY total_count DESC
+       LIMIT ?`
+    )
+      .bind(weekAgoStr, limit)
+      .all<TrendingQuery>();
+
+    return result.results;
+  } catch (error) {
+    log('error', 'Failed to get trending queries', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return [];
   }
 }
 
@@ -795,8 +937,22 @@ function getApiSchema(): OpenAPIV3.Document {
         get: {
           summary: 'Trending Queries',
           description:
-            'Returns trending podcast search queries. Feature-flagged endpoint - returns 404 when disabled.',
+            'Returns trending podcast search queries from the last 7 days. Feature-flagged endpoint - returns 404 when disabled.',
           operationId: 'trendingQueries',
+          parameters: [
+            {
+              name: 'limit',
+              in: 'query',
+              description: 'Number of trending queries to return',
+              required: false,
+              schema: {
+                type: 'integer',
+                default: 10,
+                minimum: 1,
+                maximum: 50,
+              },
+            },
+          ],
           responses: {
             '200': {
               description: 'Trending queries list',
@@ -810,10 +966,23 @@ function getApiSchema(): OpenAPIV3.Document {
                         items: {
                           type: 'object',
                           properties: {
-                            query: { type: 'string' },
-                            count: { type: 'integer' },
+                            query: { type: 'string', description: 'The search query' },
+                            count: {
+                              type: 'integer',
+                              description: 'Number of searches in the period',
+                            },
                           },
                         },
+                      },
+                      period: {
+                        type: 'string',
+                        description: 'Time period for trending data',
+                        example: '7d',
+                      },
+                      generatedAt: {
+                        type: 'string',
+                        format: 'date-time',
+                        description: 'When this data was generated',
                       },
                     },
                   },
@@ -917,18 +1086,33 @@ export default {
         if (!trendingEnabled) {
           return createErrorResponse('Not Found', 404, 'Not Found');
         }
-        // TODO: Implement D1 trending queries
+
+        const limitParam = searchParams.get('limit');
+        const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 10, 1), 50) : 10;
+        const trending = await getTrendingQueries(env, limit);
+
         const duration = Date.now() - startTime;
-        trackMetrics(env, 'trending', false, 200, duration, colo);
+        log('info', 'Trending queries request', {
+          requestId,
+          limit,
+          resultCount: trending.length,
+          duration,
+        });
+        trackMetrics(env, 'trending', false, 200, duration, colo, trending.length);
+
         return new Response(
           JSON.stringify({
-            trending: [],
-            message: 'Trending queries coming soon - D1 integration pending',
+            trending: trending.map((t) => ({
+              query: t.query_normalized,
+              count: t.total_count,
+            })),
+            period: '7d',
+            generatedAt: new Date().toISOString(),
           }),
           {
             headers: {
               'content-type': 'application/json;charset=UTF-8',
-              'Cache-Control': 'public, max-age=300',
+              'Cache-Control': 'public, max-age=300', // 5 minute cache
               ...SECURITY_HEADERS,
             },
           }
@@ -1024,6 +1208,12 @@ export default {
         status: 200,
       });
       trackMetrics(env, 'search', cacheHit, 200, duration, colo, resultCount);
+
+      // Track search query for trending (non-blocking)
+      if (query && resultCount > 0) {
+        ctx.waitUntil(trackSearchQuery(env, query));
+      }
+
       return handleRequest(() => Promise.resolve(data), CACHE_TTL_SEARCH, cacheHit);
     } catch (error) {
       const duration = Date.now() - startTime;

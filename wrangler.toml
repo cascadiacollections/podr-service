@@ -41,3 +41,9 @@ dataset = "podr_metrics"
 binding = "FLAGS"
 id = "REPLACE_WITH_KV_NAMESPACE_ID"
 preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+
+# D1 database for search analytics
+[[d1_databases]]
+binding = "DB"
+database_name = "podr-analytics"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"

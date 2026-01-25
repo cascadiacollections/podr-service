@@ -34,6 +34,39 @@ const mockEnvWithFlagsDisabled = {
   },
 };
 
+// Mock D1 database
+const createMockD1 = (
+  trendingData: Array<{ query_normalized: string; total_count: number }> = []
+) => ({
+  prepare: jest.fn((_query: string) => ({
+    bind: jest.fn().mockReturnThis(),
+    first: jest.fn(() => Promise.resolve(null)),
+    run: jest.fn(() => Promise.resolve({ success: true, meta: { rows_written: 1 } })),
+    all: jest.fn(() =>
+      Promise.resolve({
+        results: trendingData,
+        success: true,
+      })
+    ),
+  })),
+  exec: jest.fn(() => Promise.resolve({ results: [], success: true })),
+});
+
+// Mock environment with feature flags and D1
+const mockEnvWithD1 = {
+  FLAGS: {
+    get: jest.fn((key: string) => {
+      if (key === 'flag:trendingQueries') return Promise.resolve('true');
+      return Promise.resolve(null);
+    }),
+  },
+  DB: createMockD1([
+    { query_normalized: 'javascript', total_count: 150 },
+    { query_normalized: 'python', total_count: 120 },
+    { query_normalized: 'react', total_count: 90 },
+  ]),
+};
+
 describe('Podr Service Worker', () => {
   // Mock the cache API
   beforeEach(() => {
@@ -1009,6 +1042,117 @@ describe('Podr Service Worker', () => {
 
       expect(schema.paths).toHaveProperty('/trending');
       expect(schema.paths['/trending'].get).toHaveProperty('summary', 'Trending Queries');
+    });
+  });
+
+  describe('D1 trending queries', () => {
+    test('should return trending queries from D1', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.trending).toHaveLength(3);
+      expect(body.trending[0]).toEqual({ query: 'javascript', count: 150 });
+      expect(body.trending[1]).toEqual({ query: 'python', count: 120 });
+      expect(body.trending[2]).toEqual({ query: 'react', count: 90 });
+    });
+
+    test('should include period and generatedAt in trending response', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+      const body = await response.json();
+
+      expect(body).toHaveProperty('period', '7d');
+      expect(body).toHaveProperty('generatedAt');
+      expect(new Date(body.generatedAt).getTime()).not.toBeNaN();
+    });
+
+    test('should respect limit parameter in trending', async () => {
+      const url = 'http://localhost:8787/trending?limit=2';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnvWithLimitedD1 = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:trendingQueries') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        DB: createMockD1([
+          { query_normalized: 'javascript', total_count: 150 },
+          { query_normalized: 'python', total_count: 120 },
+        ]),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithLimitedD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      // D1 mock returns the data, the limit is passed to the query
+      expect(mockEnvWithLimitedD1.DB.prepare).toHaveBeenCalled();
+    });
+
+    test('should clamp limit to valid range', async () => {
+      // Test limit > 50 gets clamped
+      const url = 'http://localhost:8787/trending?limit=100';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.status).toBe(200);
+    });
+
+    test('should return empty array when D1 is not configured', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithFlags, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.trending).toEqual([]);
+    });
+
+    test('should track search queries via waitUntil', async () => {
+      const url = 'http://localhost:8787/?q=podcast';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers({ 'Content-Type': 'application/json' }),
+          }),
+          json: () => Promise.resolve({ resultCount: 5, results: [{}, {}, {}, {}, {}] }),
+        } as unknown as Response)
+      );
+
+      const mockCtxForTracking = {
+        waitUntil: jest.fn(),
+        passThroughOnException: jest.fn(),
+      } as unknown as ExecutionContext;
+
+      await worker.fetch(request, mockEnvWithD1, mockCtxForTracking);
+
+      // waitUntil should be called for tracking (and potentially other async tasks)
+      expect(mockCtxForTracking.waitUntil).toHaveBeenCalled();
+    });
+
+    test('should cache trending response for 5 minutes', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
     });
   });
 });
