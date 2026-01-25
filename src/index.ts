@@ -280,6 +280,7 @@ const MAX_LIMIT = 200 as const;
 const CACHE_TTL_SEARCH = 86400 as const; // 24 hours for search results
 const CACHE_TTL_TOP = 7200 as const; // 2 hours for top podcasts (RSS updates slowly)
 const CACHE_TTL_PODCAST_DETAIL = 14400 as const; // 4 hours for podcast details (metadata rarely changes)
+const CACHE_TTL_RELATED = 14400 as const; // 4 hours for related podcasts (similar to detail)
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
 const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
 
@@ -287,6 +288,13 @@ const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SW
  * Episode limit for podcast detail response
  */
 const PODCAST_EPISODE_LIMIT = 20 as const;
+
+/**
+ * Related podcasts limit configuration
+ */
+const MIN_RELATED_LIMIT = 1 as const;
+const MAX_RELATED_LIMIT = 20 as const;
+const DEFAULT_RELATED_LIMIT = 10 as const;
 
 /**
  * Circuit Breaker Configuration
@@ -1249,6 +1257,26 @@ interface PodcastDetailResponse {
 }
 
 /**
+ * Related podcast item in response
+ */
+interface RelatedPodcast {
+  trackId: number;
+  trackName: string;
+  genre: string;
+  artworkUrl600?: string;
+  artistName?: string;
+}
+
+/**
+ * Related podcasts response
+ */
+interface RelatedPodcastsResponse {
+  related: RelatedPodcast[];
+  sourceId: number;
+  matchedBy: 'genre';
+}
+
+/**
  * iTunes podcast detail API.
  * Fetches podcast metadata and recent episodes using the lookup API.
  *
@@ -1328,6 +1356,105 @@ async function podcastDetailRequest(
   };
 
   return { data: podcastResponse, cacheHit };
+}
+
+/**
+ * Related podcasts API.
+ * Finds similar podcasts based on the source podcast's genre.
+ *
+ * @param podcastId - The iTunes podcast ID to find related podcasts for
+ * @param limit - Number of related podcasts to return
+ * @param env - Environment bindings containing container reference
+ * @param ctx - Execution context for background tasks
+ * @returns Promise containing related podcasts and cache info
+ */
+async function relatedPodcastsRequest(
+  podcastId: number,
+  limit: number,
+  env: Env,
+  ctx?: ExecutionContext
+): Promise<{ data: RelatedPodcastsResponse; cacheHit: boolean }> {
+  // First, lookup the source podcast to get its genre
+  const lookupUrl = `${HOSTNAME}/lookup?id=${podcastId}`;
+  const { response: lookupResponse, cacheHit: lookupCacheHit } = await cachedFetchViaProxy(
+    lookupUrl,
+    CACHE_TTL_RELATED,
+    env,
+    ctx
+  );
+
+  if (lookupResponse.status >= 400) {
+    throw new Error(`iTunes API error: ${lookupResponse.status} ${lookupResponse.statusText}`);
+  }
+
+  const lookupResult = (await lookupResponse.json()) as ITunesLookupResult;
+
+  // If podcast not found, return empty related array
+  if (lookupResult.resultCount === 0 || lookupResult.results.length === 0) {
+    return {
+      data: {
+        related: [],
+        sourceId: podcastId,
+        matchedBy: 'genre',
+      },
+      cacheHit: lookupCacheHit,
+    };
+  }
+
+  const sourcePodcast = lookupResult.results.find(
+    (r) => r.wrapperType === 'track' && r.kind === 'podcast'
+  );
+
+  // If podcast data is invalid, return empty related array
+  if (!sourcePodcast || !sourcePodcast.genres || sourcePodcast.genres.length === 0) {
+    return {
+      data: {
+        related: [],
+        sourceId: podcastId,
+        matchedBy: 'genre',
+      },
+      cacheHit: lookupCacheHit,
+    };
+  }
+
+  // Use the first genre for searching similar podcasts
+  const primaryGenre = sourcePodcast.genres[0];
+
+  // Search for podcasts in the same genre
+  const searchUrl = `${HOSTNAME}/search?media=podcast&term=${encodeURIComponent(primaryGenre)}&limit=${limit + 1}`;
+  const { response: searchResponse, cacheHit: searchCacheHit } = await cachedFetchViaProxy(
+    searchUrl,
+    CACHE_TTL_RELATED,
+    env,
+    ctx
+  );
+
+  if (searchResponse.status >= 400) {
+    throw new Error(`iTunes API error: ${searchResponse.status} ${searchResponse.statusText}`);
+  }
+
+  const searchResult = (await searchResponse.json()) as ITunesSearchResponse;
+
+  // Filter out the source podcast and map to RelatedPodcast format
+  const relatedPodcasts: RelatedPodcast[] = searchResult.results
+    .filter((r) => r.collectionId !== podcastId)
+    .slice(0, limit)
+    .map((r) => ({
+      trackId: r.collectionId,
+      trackName: r.collectionName,
+      genre: primaryGenre,
+      artworkUrl600: r.artworkUrl600,
+      artistName: r.artistName,
+    }));
+
+  return {
+    data: {
+      related: relatedPodcasts,
+      sourceId: podcastId,
+      matchedBy: 'genre',
+    },
+    cacheHit: lookupCacheHit && searchCacheHit,
+  };
 }
 
 /**
@@ -1828,6 +1955,94 @@ function getApiSchema(): OpenAPIV3.Document {
           },
         },
       },
+      '/related': {
+        get: {
+          summary: 'Related Podcasts',
+          description: 'Returns similar podcasts based on a given podcast ID. Matches by genre.',
+          operationId: 'relatedPodcasts',
+          parameters: [
+            {
+              name: 'id',
+              in: 'query',
+              description: 'The iTunes podcast ID to find related podcasts for',
+              required: true,
+              schema: {
+                type: 'integer',
+                example: 1535809341,
+              },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              description: 'Number of related podcasts to return',
+              required: false,
+              schema: {
+                type: 'integer',
+                default: DEFAULT_RELATED_LIMIT,
+                minimum: MIN_RELATED_LIMIT,
+                maximum: MAX_RELATED_LIMIT,
+                example: 10,
+              },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Related podcasts list',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      related: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            trackId: { type: 'integer', description: 'iTunes podcast ID' },
+                            trackName: { type: 'string', description: 'Podcast name' },
+                            genre: { type: 'string', description: 'Matched genre' },
+                            artworkUrl600: { type: 'string', description: 'Podcast artwork URL' },
+                            artistName: { type: 'string', description: 'Podcast artist/author' },
+                          },
+                        },
+                        description: 'List of related podcasts',
+                      },
+                      sourceId: {
+                        type: 'integer',
+                        description: 'The source podcast ID used for matching',
+                      },
+                      matchedBy: {
+                        type: 'string',
+                        enum: ['genre'],
+                        description: 'The method used to find related podcasts',
+                      },
+                    },
+                  },
+                },
+              },
+              headers: {
+                'Cache-Control': {
+                  description: 'Cache duration: 4 hours',
+                  schema: {
+                    type: 'string',
+                    example: 'public, max-age=14400',
+                  },
+                },
+                'X-Cache': {
+                  description: 'Cache hit indicator',
+                  schema: {
+                    type: 'string',
+                    enum: ['HIT', 'MISS'],
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Missing or invalid id parameter',
+            },
+          },
+        },
+      },
     },
   };
 }
@@ -2013,6 +2228,68 @@ export default {
             },
           }
         );
+      }
+
+      // Related podcasts endpoint
+      if (pathname === '/related') {
+        const idParam = searchParams.get('id');
+
+        // Validate id parameter is provided
+        if (!idParam) {
+          log('warn', 'Missing id parameter for related', { requestId });
+          return createErrorResponse('Missing required parameter: id', 400, 'Bad Request');
+        }
+
+        const podcastId = parseInt(idParam, 10);
+
+        // Validate podcast ID
+        if (isNaN(podcastId) || podcastId <= 0) {
+          log('warn', 'Invalid podcast ID for related', { requestId, podcastId: idParam });
+          return createErrorResponse('Invalid podcast ID', 400, 'Bad Request');
+        }
+
+        // Parse and validate limit
+        const limitParam = searchParams.get('limit');
+        const limit = limitParam
+          ? Math.min(
+              Math.max(parseInt(limitParam, 10) || DEFAULT_RELATED_LIMIT, MIN_RELATED_LIMIT),
+              MAX_RELATED_LIMIT
+            )
+          : DEFAULT_RELATED_LIMIT;
+
+        const { data, cacheHit } = await relatedPodcastsRequest(podcastId, limit, env, ctx);
+        const duration = Date.now() - startTime;
+
+        log('info', 'Related podcasts request', {
+          requestId,
+          path: pathname,
+          podcastId,
+          limit,
+          resultCount: data.related.length,
+          duration,
+          cacheHit,
+          status: 200,
+        });
+        trackMetrics(env, 'related', cacheHit, 200, duration, colo, data.related.length);
+
+        // Export to R2 data lake (non-blocking)
+        if (env.ANALYTICS_LAKE) {
+          const analyticsEvent = createAnalyticsEvent(
+            requestId,
+            'related',
+            cacheHit,
+            200,
+            duration,
+            colo,
+            {
+              resultCount: data.related.length,
+              country: (request.cf?.country as string) ?? undefined,
+            }
+          );
+          ctx.waitUntil(exportAnalyticsEvent(env, analyticsEvent));
+        }
+
+        return handleRequest(() => Promise.resolve(data), CACHE_TTL_RELATED, cacheHit);
       }
 
       // Podcast detail endpoint: /podcast/:id
