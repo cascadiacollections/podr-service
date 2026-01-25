@@ -2226,36 +2226,62 @@ export default {
 
   /**
    * Scheduled handler for cache pre-warming.
-   * Runs on cron schedule defined in wrangler.toml to pre-warm cache with popular queries.
+   * Runs on cron schedule defined in wrangler.jsonc to pre-warm cache with popular queries.
+   * Fetches top 50 queries from D1 trending data (last 7 days) and pre-caches search results.
    */
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    const popularQueries = [
-      'news',
-      'comedy',
-      'true crime',
-      'technology',
-      'business',
-      'health',
-      'sports',
-      'music',
-      'science',
-      'history',
-    ];
+    const startTime = Date.now();
 
-    log('info', 'Cache pre-warming started', { queryCount: popularQueries.length });
+    // Fetch top 50 trending queries from D1
+    const trendingQueries = await getTrendingQueries(env, 50);
 
-    const warmupPromises = popularQueries.map(async (query) => {
+    // Fallback to hardcoded queries if D1 is not available or returns no results
+    const queries =
+      trendingQueries.length > 0
+        ? trendingQueries.map((q) => q.query_normalized)
+        : [
+            'news',
+            'comedy',
+            'true crime',
+            'technology',
+            'business',
+            'health',
+            'sports',
+            'music',
+            'science',
+            'history',
+          ];
+
+    log('info', 'Cache warming started', {
+      queryCount: queries.length,
+      source: trendingQueries.length > 0 ? 'trending' : 'fallback',
+    });
+
+    let successCount = 0;
+    let failureCount = 0;
+
+    const warmupPromises = queries.map(async (query) => {
       try {
         await searchRequest(query, 25, env, ctx);
-        log('info', 'Cache warmed', { query });
+        successCount++;
+        log('debug', 'Cache warmed for query', { query });
       } catch (error) {
-        log('warn', 'Cache warming failed', {
+        failureCount++;
+        log('warn', 'Cache warming failed for query', {
           query,
           error: error instanceof Error ? error.message : 'Unknown error',
         });
       }
     });
 
-    ctx.waitUntil(Promise.allSettled(warmupPromises));
+    await Promise.allSettled(warmupPromises);
+
+    const duration = Date.now() - startTime;
+    log('info', 'Cache warming completed', {
+      duration,
+      totalQueries: queries.length,
+      successCount,
+      failureCount,
+    });
   },
 };
