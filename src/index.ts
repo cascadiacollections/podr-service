@@ -379,6 +379,44 @@ interface TrendingQuery {
 }
 
 /**
+ * Gets autocomplete suggestions from D1 based on query prefix
+ * Returns matching queries from the last 30 days
+ *
+ * @param env - Environment bindings
+ * @param prefix - The search prefix to match
+ * @param limit - Number of suggestions to return (default: 5)
+ * @returns Array of matching query strings
+ */
+async function getSuggestions(env: Env, prefix: string, limit = 5): Promise<string[]> {
+  if (!env.DB || prefix.length < 2) return [];
+
+  try {
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().slice(0, 10);
+
+    const result = await env.DB.prepare(
+      `SELECT query_normalized, SUM(search_count) as total_count
+       FROM search_queries
+       WHERE query_normalized LIKE ? || '%'
+       AND date >= ?
+       GROUP BY query_normalized
+       ORDER BY total_count DESC
+       LIMIT ?`
+    )
+      .bind(prefix.toLowerCase(), thirtyDaysAgoStr, limit)
+      .all<TrendingQuery>();
+
+    return result.results.map((r) => r.query_normalized);
+  } catch (error) {
+    log('error', 'Failed to get suggestions', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return [];
+  }
+}
+
+/**
  * Gets trending search queries from D1
  * Returns top queries from the last 7 days
  *
@@ -1132,6 +1170,78 @@ function getApiSchema(): OpenAPIV3.Document {
           },
         },
       },
+      '/suggest': {
+        get: {
+          summary: 'Search Suggestions',
+          description:
+            'Returns autocomplete suggestions based on popular search queries. Feature-flagged endpoint (uses trendingQueries flag) - returns 404 when disabled.',
+          operationId: 'searchSuggestions',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              description: 'Search prefix to get suggestions for (minimum 2 characters)',
+              required: true,
+              schema: {
+                type: 'string',
+                minLength: 2,
+                example: 'jav',
+              },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              description: 'Number of suggestions to return',
+              required: false,
+              schema: {
+                type: 'integer',
+                default: 5,
+                minimum: 1,
+                maximum: 10,
+              },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Search suggestions list',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      suggestions: {
+                        type: 'array',
+                        items: {
+                          type: 'string',
+                        },
+                        description: 'List of suggested search queries',
+                        example: ['javascript', 'java programming', 'jazz podcasts'],
+                      },
+                      query: {
+                        type: 'string',
+                        description: 'The original query prefix',
+                        example: 'jav',
+                      },
+                    },
+                  },
+                },
+              },
+              headers: {
+                'Cache-Control': {
+                  description: 'Cache duration: 5 minutes',
+                  schema: {
+                    type: 'string',
+                    example: 'public, max-age=300',
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Feature not enabled',
+            },
+          },
+        },
+      },
     },
   };
 }
@@ -1245,6 +1355,59 @@ export default {
             })),
             period: '7d',
             generatedAt: new Date().toISOString(),
+          }),
+          {
+            headers: {
+              'content-type': 'application/json;charset=UTF-8',
+              'Cache-Control': 'public, max-age=300', // 5 minute cache
+              ...SECURITY_HEADERS,
+            },
+          }
+        );
+      }
+
+      // Suggest (autocomplete) endpoint (reuses trendingQueries feature flag)
+      if (pathname === '/suggest') {
+        const trendingEnabled = await getFlag(env, 'trendingQueries');
+        if (!trendingEnabled) {
+          return createErrorResponse('Not Found', 404, 'Not Found');
+        }
+
+        const prefix = searchParams.get('q') ?? '';
+        if (prefix.length < 2) {
+          return new Response(
+            JSON.stringify({
+              suggestions: [],
+              query: prefix,
+            }),
+            {
+              headers: {
+                'content-type': 'application/json;charset=UTF-8',
+                'Cache-Control': 'public, max-age=300', // 5 minute cache
+                ...SECURITY_HEADERS,
+              },
+            }
+          );
+        }
+
+        const limitParam = searchParams.get('limit');
+        const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 5, 1), 10) : 5;
+        const suggestions = await getSuggestions(env, prefix, limit);
+
+        const duration = Date.now() - startTime;
+        log('info', 'Suggest request', {
+          requestId,
+          prefix,
+          limit,
+          resultCount: suggestions.length,
+          duration,
+        });
+        trackMetrics(env, 'suggest', false, 200, duration, colo, suggestions.length);
+
+        return new Response(
+          JSON.stringify({
+            suggestions,
+            query: prefix,
           }),
           {
             headers: {

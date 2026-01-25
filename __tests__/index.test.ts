@@ -1156,6 +1156,153 @@ describe('Podr Service Worker', () => {
     });
   });
 
+  describe('suggest (autocomplete) endpoint', () => {
+    // Mock D1 database with suggestions data
+    const createMockD1ForSuggestions = (
+      suggestionsData: Array<{ query_normalized: string; total_count: number }> = []
+    ) => ({
+      prepare: jest.fn((_query: string) => ({
+        bind: jest.fn().mockReturnThis(),
+        first: jest.fn(() => Promise.resolve(null)),
+        run: jest.fn(() => Promise.resolve({ success: true, meta: { rows_written: 1 } })),
+        all: jest.fn(() =>
+          Promise.resolve({
+            results: suggestionsData,
+            success: true,
+          })
+        ),
+      })),
+      exec: jest.fn(() => Promise.resolve({ results: [], success: true })),
+    });
+
+    const mockEnvWithSuggestions = {
+      FLAGS: {
+        get: jest.fn((key: string) => {
+          if (key === 'flag:trendingQueries') return Promise.resolve('true');
+          return Promise.resolve(null);
+        }),
+      },
+      DB: createMockD1ForSuggestions([
+        { query_normalized: 'javascript', total_count: 150 },
+        { query_normalized: 'java programming', total_count: 120 },
+        { query_normalized: 'jazz podcasts', total_count: 90 },
+      ]),
+    };
+
+    test('should return suggestions for valid prefix', async () => {
+      const url = 'http://localhost:8787/suggest?q=jav';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithSuggestions, mockCtx);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json;charset=UTF-8');
+
+      const body = await response.json();
+      expect(body).toHaveProperty('suggestions');
+      expect(body).toHaveProperty('query', 'jav');
+      expect(Array.isArray(body.suggestions)).toBe(true);
+      expect(body.suggestions).toHaveLength(3);
+      expect(body.suggestions).toContain('javascript');
+    });
+
+    test('should return empty array for short prefix (< 2 chars)', async () => {
+      const url = 'http://localhost:8787/suggest?q=j';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithSuggestions, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.suggestions).toEqual([]);
+      expect(body.query).toBe('j');
+    });
+
+    test('should return empty array for empty prefix', async () => {
+      const url = 'http://localhost:8787/suggest';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithSuggestions, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.suggestions).toEqual([]);
+      expect(body.query).toBe('');
+    });
+
+    test('should respect limit parameter', async () => {
+      const url = 'http://localhost:8787/suggest?q=jav&limit=2';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnvWithLimitedSuggestions = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:trendingQueries') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        DB: createMockD1ForSuggestions([
+          { query_normalized: 'javascript', total_count: 150 },
+          { query_normalized: 'java programming', total_count: 120 },
+        ]),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithLimitedSuggestions, mockCtx);
+
+      expect(response.status).toBe(200);
+      expect(mockEnvWithLimitedSuggestions.DB.prepare).toHaveBeenCalled();
+    });
+
+    test('should clamp limit to valid range (1-10)', async () => {
+      // Test limit > 10 gets clamped
+      const url = 'http://localhost:8787/suggest?q=jav&limit=20';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithSuggestions, mockCtx);
+
+      expect(response.status).toBe(200);
+    });
+
+    test('should return 404 when feature flag is disabled', async () => {
+      const url = 'http://localhost:8787/suggest?q=jav';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(404);
+    });
+
+    test('should return 404 when feature flag is explicitly false', async () => {
+      const url = 'http://localhost:8787/suggest?q=jav';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithFlagsDisabled, mockCtx);
+
+      expect(response.status).toBe(404);
+    });
+
+    test('should cache suggest response for 5 minutes', async () => {
+      const url = 'http://localhost:8787/suggest?q=jav';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithSuggestions, mockCtx);
+
+      expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
+    });
+
+    test('should include /suggest in schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+      const schema = await response.json();
+
+      expect(schema.paths).toHaveProperty('/suggest');
+      expect(schema.paths['/suggest'].get).toHaveProperty('summary', 'Search Suggestions');
+      expect(schema.paths['/suggest'].get).toHaveProperty('operationId', 'searchSuggestions');
+    });
+  });
+
   describe('R2 analytics export', () => {
     const createMockR2 = () => ({
       put: jest.fn(() =>
