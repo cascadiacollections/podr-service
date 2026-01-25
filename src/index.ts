@@ -41,12 +41,29 @@ interface LogContext {
 }
 
 /**
+ * Analytics Engine data point
+ */
+interface AnalyticsDataPoint {
+  blobs?: string[];
+  doubles?: number[];
+  indexes?: string[];
+}
+
+/**
+ * Analytics Engine binding
+ */
+interface AnalyticsEngine {
+  writeDataPoint: (data: AnalyticsDataPoint) => void;
+}
+
+/**
  * Environment bindings for the Worker
  */
 interface Env {
   RATE_LIMITER?: {
     limit: (options: { key: string }) => Promise<{ success: boolean }>;
   };
+  ANALYTICS?: AnalyticsEngine;
 }
 
 /**
@@ -754,6 +771,31 @@ function createErrorResponse(message: string, status: number, statusText: string
 }
 
 /**
+ * Tracks request metrics via Analytics Engine
+ *
+ * Blobs (dimensions): endpoint, cacheStatus, statusCode, colo
+ * Doubles (metrics): duration, resultCount
+ * Indexes: date-based for sampling
+ */
+function trackMetrics(
+  env: Env,
+  endpoint: string,
+  cacheHit: boolean,
+  status: number,
+  duration: number,
+  colo: string,
+  resultCount = 0
+): void {
+  if (!env.ANALYTICS) return;
+
+  env.ANALYTICS.writeDataPoint({
+    blobs: [endpoint, cacheHit ? 'HIT' : 'MISS', String(status), colo],
+    doubles: [duration, resultCount],
+    indexes: [new Date().toISOString().slice(0, 10)], // YYYY-MM-DD for daily sampling
+  });
+}
+
+/**
  * Gets client IP from request for rate limiting
  */
 function getClientIP(request: Request): string {
@@ -771,6 +813,7 @@ export default {
     const startTime = Date.now();
     const requestId = generateRequestId();
     const { searchParams, pathname } = new URL(request.url);
+    const colo = (request.cf?.colo as string) ?? 'unknown';
 
     try {
       // Only allow GET requests
@@ -799,11 +842,9 @@ export default {
 
       // Serve API schema at root path when no query params
       if (pathname === '/' && !searchParams.has('q')) {
-        log('info', 'Schema request', {
-          requestId,
-          path: pathname,
-          duration: Date.now() - startTime,
-        });
+        const duration = Date.now() - startTime;
+        log('info', 'Schema request', { requestId, path: pathname, duration });
+        trackMetrics(env, 'schema', true, 200, duration, colo);
         return new Response(JSON.stringify(getApiSchema(), null, 2), {
           headers: {
             'content-type': 'application/json;charset=UTF-8',
@@ -847,6 +888,8 @@ export default {
       if (query === RESERVED_PARAM_TOPPODCASTS) {
         const { data, cacheHit } = await topRequest(limit, genre, ctx);
         const duration = Date.now() - startTime;
+        const feed = data as { feed?: { entry?: unknown[] } };
+        const resultCount = feed?.feed?.entry?.length ?? 0;
         log('info', 'Top podcasts request', {
           requestId,
           path: pathname,
@@ -857,12 +900,15 @@ export default {
           cacheHit,
           status: 200,
         });
+        trackMetrics(env, 'toppodcasts', cacheHit, 200, duration, colo, resultCount);
         return handleRequest(() => Promise.resolve(data), CACHE_TTL_TOP, cacheHit);
       }
 
       // Handle search request
       const { data, cacheHit } = await searchRequest(query, limit, ctx);
       const duration = Date.now() - startTime;
+      const results = data as { resultCount?: number };
+      const resultCount = results?.resultCount ?? 0;
       log('info', 'Search request', {
         requestId,
         path: pathname,
@@ -872,6 +918,7 @@ export default {
         cacheHit,
         status: 200,
       });
+      trackMetrics(env, 'search', cacheHit, 200, duration, colo, resultCount);
       return handleRequest(() => Promise.resolve(data), CACHE_TTL_SEARCH, cacheHit);
     } catch (error) {
       const duration = Date.now() - startTime;
@@ -884,6 +931,7 @@ export default {
           status: error.status,
           duration,
         });
+        trackMetrics(env, 'error', false, error.status, duration, colo);
         return error;
       }
 
@@ -896,6 +944,7 @@ export default {
         duration,
         status: 500,
       });
+      trackMetrics(env, 'error', false, 500, duration, colo);
       return createErrorResponse(errorMessage, 500, 'Internal Server Error');
     }
   },
