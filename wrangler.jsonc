@@ -66,13 +66,13 @@
   //   }
   // ],
 
-  // R2 bucket for analytics data lake (disabled until enabled)
-  // "r2_buckets": [
-  //   {
-  //     "binding": "ANALYTICS_LAKE",
-  //     "bucket_name": "podr-analytics-lake"
-  //   }
-  // ],
+  // R2 bucket for analytics data lake
+  "r2_buckets": [
+    {
+      "binding": "ANALYTICS_LAKE",
+      "bucket_name": "podr-analytics-lake"
+    }
+  ],
 
   // Podcast Index API credentials (set via wrangler secret put)
   // Register at https://api.podcastindex.org/signup
@@ -89,7 +89,7 @@
     {
       "class_name": "ITunesProxy",
       "image": "./Dockerfile",
-      "max_instances": 5
+      "max_instances": 2
     }
   ],
 
