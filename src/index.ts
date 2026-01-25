@@ -2257,31 +2257,36 @@ export default {
       source: trendingQueries.length > 0 ? 'trending' : 'fallback',
     });
 
-    let successCount = 0;
-    let failureCount = 0;
-
     const warmupPromises = queries.map(async (query) => {
       try {
         await searchRequest(query, 25, env, ctx);
-        successCount++;
         log('debug', 'Cache warmed for query', { query });
+        return { query, success: true };
       } catch (error) {
-        failureCount++;
         log('warn', 'Cache warming failed for query', {
           query,
           error: error instanceof Error ? error.message : 'Unknown error',
         });
+        return { query, success: false };
       }
     });
 
-    await Promise.allSettled(warmupPromises);
+    // Use waitUntil to allow the function to return immediately
+    ctx.waitUntil(
+      Promise.allSettled(warmupPromises).then((results) => {
+        const successCount = results.filter(
+          (r) => r.status === 'fulfilled' && r.value.success
+        ).length;
+        const failureCount = results.length - successCount;
+        const duration = Date.now() - startTime;
 
-    const duration = Date.now() - startTime;
-    log('info', 'Cache warming completed', {
-      duration,
-      totalQueries: queries.length,
-      successCount,
-      failureCount,
-    });
+        log('info', 'Cache warming completed', {
+          duration,
+          totalQueries: queries.length,
+          successCount,
+          failureCount,
+        });
+      })
+    );
   },
 };
