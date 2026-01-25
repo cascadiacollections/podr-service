@@ -1004,18 +1004,62 @@ async function searchRequest(
     return podcastIndexSearch(query, limit, env, ctx);
   }
 
-  // Fallback to iTunes API
+  // Fallback to iTunes API (via container proxy to avoid 403)
   const route = 'search';
   const mediaType = 'podcast';
   const searchUrl = `${HOSTNAME}/${route}?media=${mediaType}&term=${encodeURIComponent(query)}&limit=${limit}`;
-  const { response, cacheHit } = await cachedFetch(searchUrl, CACHE_TTL_SEARCH, ctx);
 
-  // Check if response indicates an error
-  if (response.status >= 400) {
+  // Check cache first
+  const cache = caches.default;
+  const cacheKey = new Request(searchUrl, { method: 'GET' });
+
+  if (isCircuitOpen()) {
+    const staleResponse = await cache.match(cacheKey);
+    if (staleResponse) {
+      log('warn', 'Circuit open, serving stale cache', { url: searchUrl });
+      const data = await staleResponse.json();
+      return { data, cacheHit: true };
+    }
+    throw new Error('Service temporarily unavailable');
+  }
+
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) {
+    const data = await cachedResponse.json();
+    return { data, cacheHit: true };
+  }
+
+  // Fetch via container proxy (or direct fetch as fallback)
+  let response: Response;
+
+  if (env.ITUNES_PROXY) {
+    const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+    const container = env.ITUNES_PROXY.get(containerId);
+    const proxyUrl = `http://container/?url=${encodeURIComponent(searchUrl)}`;
+    response = await container.fetch(proxyUrl);
+  } else {
+    log('warn', 'ITUNES_PROXY not available, using direct fetch', { url: searchUrl });
+    response = await fetch(searchUrl);
+  }
+
+  if (!response.ok) {
+    recordFailure();
     throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
   }
 
-  return { data: await response.json(), cacheHit };
+  recordSuccess();
+  const data = await response.json();
+
+  // Cache the response
+  const responseToCache = new Response(JSON.stringify(data), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
+    },
+  });
+  void cache.put(cacheKey, responseToCache);
+
+  return { data, cacheHit: false };
 }
 
 /**
