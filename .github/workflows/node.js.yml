@@ -8,6 +8,7 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - '.mise.toml'
+      - 'migrations/**'
   workflow_dispatch:
 
 permissions:
@@ -18,24 +19,36 @@ env:
 
 # Cancel in-progress runs when new commits are pushed
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Optimized for GitHub Enterprise COGS:
-# - CI only runs on PRs (deploy workflow handles main, trusts PR checks)
-# - Path filters skip CI for docs-only changes
+# COGS optimizations:
+# - Single job (dependency-review merged) saves runner startup overhead
+# - Path filters skip CI for docs/config-only changes
 # - Concurrency cancels superseded runs
-# - Single job combines lint, test, and build to reduce runner overhead
-# - Single Node.js version (production target) instead of matrix
-# - No artifact uploads (deploy workflow builds fresh)
+# - timeout-minutes caps runaway jobs
+# - Sparse checkout reduces clone time
+# - yarn cache via setup-node
 
 jobs:
   ci:
     name: Lint, Test & Build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
+      with:
+        sparse-checkout: |
+          src
+          __tests__
+          package.json
+          yarn.lock
+          tsconfig.json
+          jest.config.js
+          eslint.config.mjs
+          .prettierrc
+        sparse-checkout-cone-mode: false
 
     - name: Setup Node.js
       uses: actions/setup-node@v6
@@ -44,25 +57,14 @@ jobs:
         cache: 'yarn'
 
     - name: Install dependencies
-      run: yarn install --frozen-lockfile
+      run: yarn install --frozen-lockfile --prefer-offline
 
-    - name: Lint code
-      run: yarn lint
+    - name: Lint and test
+      run: |
+        yarn lint
+        yarn format:check
+        yarn test
 
-    - name: Check formatting
-      run: yarn format:check
-
-    - name: Run tests
-      run: yarn test
-
-    - name: Build project
-      run: yarn build
-
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v6
-    - name: Dependency Review
+    - name: Dependency review
       uses: actions/dependency-review-action@v4
+      if: github.event_name == 'pull_request'

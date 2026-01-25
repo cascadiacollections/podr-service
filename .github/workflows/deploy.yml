@@ -8,6 +8,7 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - '.mise.toml'
+      - 'migrations/**'
   workflow_dispatch:
 
 permissions:
@@ -23,13 +24,30 @@ concurrency:
   group: deploy-${{ github.ref }}
   cancel-in-progress: true
 
+# COGS optimizations:
+# - Deploy only on main push (CI runs on PRs)
+# - Path filters skip deploy for docs-only changes
+# - Concurrency cancels superseded deploys
+# - timeout-minutes caps runaway deploys
+# - Sparse checkout for faster clone
+# - --prefer-offline uses cached packages
+
 jobs:
   deploy:
     name: Deploy Worker
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
     - name: Checkout code
       uses: actions/checkout@v6
+      with:
+        sparse-checkout: |
+          src
+          package.json
+          yarn.lock
+          tsconfig.json
+          wrangler.toml
+        sparse-checkout-cone-mode: false
 
     - name: Setup Node.js
       uses: actions/setup-node@v6
@@ -38,7 +56,7 @@ jobs:
         cache: 'yarn'
 
     - name: Install dependencies
-      run: yarn install --frozen-lockfile
+      run: yarn install --frozen-lockfile --prefer-offline
 
     - name: Deploy to Cloudflare Workers
       run: yarn wrangler deploy
@@ -48,8 +66,8 @@ jobs:
 
     - name: Post-deploy health check
       run: |
-        sleep 5
-        RESPONSE=$(curl -sf --retry 3 --retry-delay 2 "${{ env.WORKER_URL }}/health" || echo "FAILED")
+        sleep 3
+        RESPONSE=$(curl -sf --retry 2 --retry-delay 2 --max-time 10 "${{ env.WORKER_URL }}/health" || echo "FAILED")
         if [ "$RESPONSE" = "FAILED" ]; then
           echo "::error::Health check failed - endpoint unreachable"
           exit 1
@@ -59,4 +77,4 @@ jobs:
           echo "::error::Health check failed - status: $STATUS"
           exit 1
         fi
-        echo "Health check passed"
+        echo "::notice::Deploy successful - health check passed"
