@@ -47,3 +47,8 @@ preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
 binding = "DB"
 database_name = "podr-analytics"
 database_id = "REPLACE_WITH_D1_DATABASE_ID"
+
+# R2 bucket for analytics data lake (batch processing, long-term storage)
+[[r2_buckets]]
+binding = "ANALYTICS_LAKE"
+bucket_name = "podr-analytics-lake"

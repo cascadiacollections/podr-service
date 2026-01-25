@@ -1155,4 +1155,152 @@ describe('Podr Service Worker', () => {
       expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
     });
   });
+
+  describe('R2 analytics export', () => {
+    const createMockR2 = () => ({
+      put: jest.fn(() =>
+        Promise.resolve({ key: 'test', size: 100, etag: 'abc', uploaded: new Date() })
+      ),
+      get: jest.fn(() => Promise.resolve(null)),
+      list: jest.fn(() => Promise.resolve({ objects: [], truncated: false })),
+      head: jest.fn(() => Promise.resolve(null)),
+    });
+
+    test('should export search events to R2 when binding is configured', async () => {
+      const url = 'http://localhost:8787/?q=typescript';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers({ 'Content-Type': 'application/json' }),
+          }),
+          json: () => Promise.resolve({ resultCount: 10, results: [] }),
+        } as unknown as Response)
+      );
+
+      const mockR2 = createMockR2();
+      const mockEnvWithR2 = {
+        ANALYTICS_LAKE: mockR2,
+      };
+
+      const mockCtxForR2 = {
+        waitUntil: jest.fn(),
+        passThroughOnException: jest.fn(),
+      } as unknown as ExecutionContext;
+
+      await worker.fetch(request, mockEnvWithR2, mockCtxForR2);
+
+      // waitUntil should be called for R2 export
+      expect(mockCtxForR2.waitUntil).toHaveBeenCalled();
+    });
+
+    test('should export toppodcasts events to R2', async () => {
+      const url = 'http://localhost:8787/?q=toppodcasts&genre=1312';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers({ 'Content-Type': 'application/json' }),
+          }),
+          json: () => Promise.resolve({ feed: { entry: [{}, {}, {}] } }),
+        } as unknown as Response)
+      );
+
+      const mockR2 = createMockR2();
+      const mockEnvWithR2 = {
+        ANALYTICS_LAKE: mockR2,
+      };
+
+      const mockCtxForR2 = {
+        waitUntil: jest.fn(),
+        passThroughOnException: jest.fn(),
+      } as unknown as ExecutionContext;
+
+      await worker.fetch(request, mockEnvWithR2, mockCtxForR2);
+
+      expect(mockCtxForR2.waitUntil).toHaveBeenCalled();
+    });
+
+    test('should not fail when R2 is not configured', async () => {
+      const url = 'http://localhost:8787/?q=test';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers({ 'Content-Type': 'application/json' }),
+          }),
+          json: () => Promise.resolve({ resultCount: 1, results: [{}] }),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(200);
+    });
+
+    test('should include endpoint and metadata in R2 export', async () => {
+      const url = 'http://localhost:8787/?q=react';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers({ 'Content-Type': 'application/json' }),
+          }),
+          json: () => Promise.resolve({ resultCount: 5, results: [] }),
+        } as unknown as Response)
+      );
+
+      const mockR2 = createMockR2();
+      const mockEnvWithR2 = {
+        ANALYTICS_LAKE: mockR2,
+      };
+
+      const mockCtxForR2 = {
+        waitUntil: jest.fn((promise: Promise<void>) => {
+          // Execute the promise to trigger the R2 put
+          promise.catch(() => {});
+        }),
+        passThroughOnException: jest.fn(),
+      } as unknown as ExecutionContext;
+
+      await worker.fetch(request, mockEnvWithR2, mockCtxForR2);
+
+      // Give time for waitUntil promises to execute
+      await new Promise((resolve) => setTimeout(resolve, 10));
+
+      expect(mockR2.put).toHaveBeenCalled();
+      const putCall = mockR2.put.mock.calls[0];
+      expect(putCall[0]).toMatch(/^events\/\d{4}\/\d{2}\/\d{2}\/\d{2}\/.+\.json$/);
+
+      const eventData = JSON.parse(putCall[1] as string);
+      expect(eventData).toHaveProperty('endpoint', 'search');
+      expect(eventData).toHaveProperty('query', 'react');
+      expect(eventData).toHaveProperty('timestamp');
+      expect(eventData).toHaveProperty('durationMs');
+    });
+  });
 });

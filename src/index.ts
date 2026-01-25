@@ -96,12 +96,69 @@ interface D1Database {
 }
 
 /**
+ * R2 bucket binding for analytics data lake
+ */
+interface R2Bucket {
+  put: (
+    key: string,
+    value: string | ArrayBuffer | ReadableStream,
+    options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }
+  ) => Promise<R2Object | null>;
+  get: (key: string) => Promise<R2ObjectBody | null>;
+  list: (options?: { prefix?: string; limit?: number; cursor?: string }) => Promise<R2Objects>;
+  head: (key: string) => Promise<R2Object | null>;
+}
+
+interface R2Object {
+  key: string;
+  size: number;
+  etag: string;
+  uploaded: Date;
+  httpMetadata?: { contentType?: string };
+  customMetadata?: Record<string, string>;
+}
+
+interface R2ObjectBody extends R2Object {
+  body: ReadableStream;
+  text: () => Promise<string>;
+  json: <T>() => Promise<T>;
+}
+
+interface R2Objects {
+  objects: R2Object[];
+  truncated: boolean;
+  cursor?: string;
+}
+
+/**
+ * Analytics event for R2 export (data lake)
+ */
+interface AnalyticsEvent {
+  timestamp: string;
+  date: string;
+  hour: number;
+  requestId: string;
+  endpoint: string;
+  query?: string;
+  queryHash?: string;
+  limit?: number;
+  genre?: number;
+  resultCount: number;
+  cacheHit: boolean;
+  status: number;
+  durationMs: number;
+  colo: string;
+  country?: string;
+}
+
+/**
  * Feature flag configuration
  */
 interface FeatureFlags {
   trendingQueries: boolean;
   semanticSearch: boolean;
   enhancedCaching: boolean;
+  analyticsExport: boolean;
 }
 
 /**
@@ -111,6 +168,7 @@ const DEFAULT_FLAGS: FeatureFlags = {
   trendingQueries: false,
   semanticSearch: false,
   enhancedCaching: false,
+  analyticsExport: false,
 };
 
 /**
@@ -123,6 +181,7 @@ interface Env {
   ANALYTICS?: AnalyticsEngine;
   FLAGS?: KVNamespace;
   DB?: D1Database;
+  ANALYTICS_LAKE?: R2Bucket;
 }
 
 /**
@@ -354,6 +413,84 @@ async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]
     });
     return [];
   }
+}
+
+/**
+ * Exports an analytics event to R2 for data lake / batch processing
+ * Events are stored as NDJSON files partitioned by date and hour
+ *
+ * Path format: events/YYYY/MM/DD/HH/{requestId}.json
+ *
+ * @param env - Environment bindings
+ * @param event - Analytics event to export
+ */
+async function exportAnalyticsEvent(env: Env, event: AnalyticsEvent): Promise<void> {
+  if (!env.ANALYTICS_LAKE) return;
+
+  try {
+    const date = new Date(event.timestamp);
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    const hour = String(date.getUTCHours()).padStart(2, '0');
+
+    // Path: events/2026/01/24/12/{requestId}.json
+    const key = `events/${year}/${month}/${day}/${hour}/${event.requestId}.json`;
+
+    await env.ANALYTICS_LAKE.put(key, JSON.stringify(event), {
+      httpMetadata: { contentType: 'application/json' },
+      customMetadata: {
+        endpoint: event.endpoint,
+        colo: event.colo,
+        date: event.date,
+      },
+    });
+  } catch (error) {
+    // Don't fail the request if export fails
+    log('error', 'Failed to export analytics event', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      requestId: event.requestId,
+    });
+  }
+}
+
+/**
+ * Creates an analytics event from request context
+ */
+function createAnalyticsEvent(
+  requestId: string,
+  endpoint: string,
+  cacheHit: boolean,
+  status: number,
+  durationMs: number,
+  colo: string,
+  options: {
+    query?: string;
+    queryHash?: string;
+    limit?: number;
+    genre?: number;
+    resultCount?: number;
+    country?: string;
+  } = {}
+): AnalyticsEvent {
+  const now = new Date();
+  return {
+    timestamp: now.toISOString(),
+    date: now.toISOString().slice(0, 10),
+    hour: now.getUTCHours(),
+    requestId,
+    endpoint,
+    query: options.query,
+    queryHash: options.queryHash,
+    limit: options.limit,
+    genre: options.genre,
+    resultCount: options.resultCount ?? 0,
+    cacheHit,
+    status,
+    durationMs,
+    colo,
+    country: options.country,
+  };
 }
 
 /**
@@ -1190,6 +1327,26 @@ export default {
           status: 200,
         });
         trackMetrics(env, 'toppodcasts', cacheHit, 200, duration, colo, resultCount);
+
+        // Export to R2 data lake (non-blocking)
+        if (env.ANALYTICS_LAKE) {
+          const analyticsEvent = createAnalyticsEvent(
+            requestId,
+            'toppodcasts',
+            cacheHit,
+            200,
+            duration,
+            colo,
+            {
+              limit,
+              genre: genre !== -1 ? genre : undefined,
+              resultCount,
+              country: (request.cf?.country as string) ?? undefined,
+            }
+          );
+          ctx.waitUntil(exportAnalyticsEvent(env, analyticsEvent));
+        }
+
         return handleRequest(() => Promise.resolve(data), CACHE_TTL_TOP, cacheHit);
       }
 
@@ -1212,6 +1369,25 @@ export default {
       // Track search query for trending (non-blocking)
       if (query && resultCount > 0) {
         ctx.waitUntil(trackSearchQuery(env, query));
+      }
+
+      // Export to R2 data lake (non-blocking, feature-flagged)
+      if (env.ANALYTICS_LAKE) {
+        const analyticsEvent = createAnalyticsEvent(
+          requestId,
+          'search',
+          cacheHit,
+          200,
+          duration,
+          colo,
+          {
+            query,
+            limit,
+            resultCount,
+            country: (request.cf?.country as string) ?? undefined,
+          }
+        );
+        ctx.waitUntil(exportAnalyticsEvent(env, analyticsEvent));
       }
 
       return handleRequest(() => Promise.resolve(data), CACHE_TTL_SEARCH, cacheHit);
