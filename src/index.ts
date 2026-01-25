@@ -13,6 +13,52 @@ interface IGenresDictionary {
 }
 
 /**
+ * Result from cachedFetch including cache hit information
+ */
+interface CachedFetchResult {
+  response: Response;
+  cacheHit: boolean;
+}
+
+/**
+ * Log levels for structured logging
+ */
+type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+/**
+ * Structured log context
+ */
+interface LogContext {
+  requestId?: string;
+  method?: string;
+  path?: string;
+  query?: string;
+  duration?: number;
+  cacheHit?: boolean;
+  status?: number;
+  error?: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Environment bindings for the Worker
+ */
+interface Env {
+  RATE_LIMITER?: {
+    limit: (options: { key: string }) => Promise<{ success: boolean }>;
+  };
+}
+
+/**
+ * Circuit breaker state for upstream API
+ */
+interface CircuitBreakerState {
+  failures: number;
+  lastFailure: number;
+  state: 'closed' | 'open' | 'half-open';
+}
+
+/**
  * API Configuration Constants
  */
 const SEARCH_LIMIT = 15 as const;
@@ -20,11 +66,45 @@ const HOSTNAME = 'https://itunes.apple.com' as const;
 const RESERVED_PARAM_TOPPODCASTS = 'toppodcasts' as const;
 
 /**
+ * Validation Constants
+ */
+const MAX_QUERY_LENGTH = 200 as const;
+const MIN_LIMIT = 1 as const;
+const MAX_LIMIT = 200 as const;
+
+/**
  * Cache TTL Configuration (in seconds)
  */
 const CACHE_TTL_SEARCH = 3600 as const; // 1 hour for search results
 const CACHE_TTL_TOP = 1800 as const; // 30 minutes for top podcasts
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
+const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
+
+/**
+ * Circuit Breaker Configuration
+ */
+const CIRCUIT_BREAKER_THRESHOLD = 5 as const;
+const CIRCUIT_BREAKER_RECOVERY_MS = 30000 as const; // 30 seconds
+
+/**
+ * In-memory circuit breaker state (resets on cold start)
+ */
+const circuitBreaker: CircuitBreakerState = {
+  failures: 0,
+  lastFailure: 0,
+  state: 'closed',
+};
+
+/**
+ * Suspicious patterns to reject (basic security)
+ */
+const SUSPICIOUS_PATTERNS = [
+  /<script/i,
+  /javascript:/i,
+  /on\w+=/i, // onclick=, onerror=, etc.
+  /<iframe/i,
+  /data:/i,
+];
 
 const ITUNES_API_GENRES: IGenresDictionary = {
   1301: 'Arts',
@@ -54,33 +134,176 @@ const GENRES_LIST: string = Object.entries(ITUNES_API_GENRES)
   .map(([id, name]) => `${id} (${name.replace(/·/g, ' ')})`)
   .join(', ');
 
+// Pre-compute valid genre IDs for validation
+const VALID_GENRE_IDS = new Set(Object.keys(ITUNES_API_GENRES).map(Number));
+
+/**
+ * Generates a unique request ID for tracing
+ */
+function generateRequestId(): string {
+  return crypto.randomUUID();
+}
+
+/**
+ * Structured JSON logging for Workers Logs Query Builder support
+ */
+function log(level: LogLevel, message: string, context: LogContext = {}): void {
+  console.log(JSON.stringify({ level, message, timestamp: Date.now(), ...context }));
+}
+
+/**
+ * Validates input query for security and constraints
+ *
+ * @param query - The search query to validate
+ * @returns Error message if invalid, undefined if valid
+ */
+function validateQuery(query: string): string | undefined {
+  if (query.length > MAX_QUERY_LENGTH) {
+    return `Query exceeds maximum length of ${MAX_QUERY_LENGTH} characters`;
+  }
+
+  for (const pattern of SUSPICIOUS_PATTERNS) {
+    if (pattern.test(query)) {
+      return 'Query contains invalid characters';
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Validates the limit parameter
+ *
+ * @param limit - The limit string to validate
+ * @returns Validated limit number or error response
+ */
+function validateLimit(limit: string | undefined): number | Response {
+  if (!limit) return SEARCH_LIMIT;
+
+  const parsed = parseInt(limit, 10);
+  if (isNaN(parsed) || parsed < MIN_LIMIT || parsed > MAX_LIMIT) {
+    return new Response(`Limit must be between ${MIN_LIMIT} and ${MAX_LIMIT}`, {
+      status: 400,
+      statusText: 'Bad Request',
+    });
+  }
+  return parsed;
+}
+
+/**
+ * Validates the genre parameter
+ *
+ * @param genre - The genre ID to validate
+ * @returns Error response if invalid, undefined if valid
+ */
+function validateGenre(genre: number): Response | undefined {
+  if (genre !== -1 && !VALID_GENRE_IDS.has(genre)) {
+    return new Response(`Invalid genre ID. Valid genres: ${GENRES_LIST}`, {
+      status: 400,
+      statusText: 'Bad Request',
+    });
+  }
+  return undefined;
+}
+
+/**
+ * Checks if the circuit breaker should allow requests
+ */
+function isCircuitOpen(): boolean {
+  if (circuitBreaker.state === 'closed') return false;
+
+  const now = Date.now();
+  if (circuitBreaker.state === 'open') {
+    if (now - circuitBreaker.lastFailure > CIRCUIT_BREAKER_RECOVERY_MS) {
+      circuitBreaker.state = 'half-open';
+      return false;
+    }
+    return true;
+  }
+
+  // half-open state: allow the request through
+  return false;
+}
+
+/**
+ * Records a successful request for circuit breaker
+ */
+function recordSuccess(): void {
+  circuitBreaker.failures = 0;
+  circuitBreaker.state = 'closed';
+}
+
+/**
+ * Records a failed request for circuit breaker
+ */
+function recordFailure(): void {
+  circuitBreaker.failures++;
+  circuitBreaker.lastFailure = Date.now();
+
+  if (circuitBreaker.failures >= CIRCUIT_BREAKER_THRESHOLD) {
+    circuitBreaker.state = 'open';
+  }
+}
+
 /**
  * Fetches data with Cloudflare Cache API support.
  * Uses cache-first strategy to minimize external API calls.
+ * Returns cache hit information for observability.
  *
  * @param url - URL to fetch
  * @param cacheTtl - Time to live for cache in seconds
- * @returns Response from cache or fetch
+ * @param ctx - Execution context for waitUntil (optional)
+ * @returns Response from cache or fetch with cache hit info
  * @throws Error if fetch fails
  */
-async function cachedFetch(url: string, cacheTtl: number): Promise<Response> {
+async function cachedFetch(
+  url: string,
+  cacheTtl: number,
+  ctx?: ExecutionContext
+): Promise<CachedFetchResult> {
   const cache = caches.default;
   const cacheKey = new Request(url, { method: 'GET' });
 
+  // Check circuit breaker
+  if (isCircuitOpen()) {
+    // Try to serve from cache even if stale
+    const staleResponse = await cache.match(cacheKey);
+    if (staleResponse) {
+      log('warn', 'Circuit open, serving stale cache', { url });
+      return { response: staleResponse, cacheHit: true };
+    }
+    throw new Error('Service temporarily unavailable');
+  }
+
   // Try to get from cache first
-  let response = await cache.match(cacheKey);
+  const cachedResponse = await cache.match(cacheKey);
 
-  if (!response) {
-    // Not in cache, fetch from origin
-    response = await fetch(url);
+  if (cachedResponse) {
+    // Check if we should revalidate in background (SWR)
+    const age = cachedResponse.headers.get('age');
+    const ageSeconds = age ? parseInt(age, 10) : 0;
 
-    // Only cache successful responses
+    if (ageSeconds > cacheTtl && ageSeconds < CACHE_STALE_TOLERANCE && ctx) {
+      // Serve stale, revalidate in background
+      ctx.waitUntil(revalidateCache(url, cacheTtl, cache, cacheKey));
+      log('info', 'Serving stale, revalidating in background', { url, ageSeconds });
+    }
+
+    return { response: cachedResponse, cacheHit: true };
+  }
+
+  // Not in cache, fetch from origin
+  try {
+    const response = await fetch(url);
+
     if (response.ok) {
+      recordSuccess();
+
       // Clone response before caching (responses can only be read once)
       const responseToCache = response.clone();
 
       // Create a new response with cache headers
-      const cachedResponse = new Response(responseToCache.body, {
+      const cachedResponseToStore = new Response(responseToCache.body, {
         status: responseToCache.status,
         statusText: responseToCache.statusText,
         headers: {
@@ -90,25 +313,78 @@ async function cachedFetch(url: string, cacheTtl: number): Promise<Response> {
       });
 
       // Cache the response asynchronously (don't await to avoid blocking)
-      void cache.put(cacheKey, cachedResponse);
+      void cache.put(cacheKey, cachedResponseToStore);
+    } else {
+      recordFailure();
     }
-  }
 
-  return response;
+    return { response, cacheHit: false };
+  } catch (error) {
+    recordFailure();
+    throw error;
+  }
 }
+
+/**
+ * Revalidates cache entry in background
+ */
+async function revalidateCache(
+  url: string,
+  cacheTtl: number,
+  cache: Cache,
+  cacheKey: Request
+): Promise<void> {
+  try {
+    const response = await fetch(url);
+    if (response.ok) {
+      recordSuccess();
+      const cachedResponse = new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: {
+          ...Object.fromEntries(response.headers),
+          'Cache-Control': `public, max-age=${cacheTtl}`,
+        },
+      });
+      await cache.put(cacheKey, cachedResponse);
+      log('info', 'Cache revalidated', { url });
+    } else {
+      recordFailure();
+      log('warn', 'Cache revalidation failed', { url, status: response.status });
+    }
+  } catch (error) {
+    recordFailure();
+    log('error', 'Cache revalidation error', {
+      url,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+}
+
+/**
+ * Security headers for all responses
+ */
+const SECURITY_HEADERS: HeadersInit = {
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+};
 
 /**
  * Creates standard response headers for API responses
  *
  * @param cacheTtl - Time to live for cache in seconds
+ * @param cacheHit - Whether response was served from cache
  * @returns Headers object
  */
-function createResponseHeaders(cacheTtl: number): HeadersInit {
+function createResponseHeaders(cacheTtl: number, cacheHit = false): HeadersInit {
   return {
     'content-type': 'application/json;charset=UTF-8',
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET',
     'Cache-Control': `public, max-age=${cacheTtl}`,
+    'X-Cache': cacheHit ? 'HIT' : 'MISS',
+    ...SECURITY_HEADERS,
   };
 }
 
@@ -117,12 +393,17 @@ function createResponseHeaders(cacheTtl: number): HeadersInit {
  *
  * @param apiCall - API request to call
  * @param cacheTtl - Time to live for cache in seconds
+ * @param cacheHit - Whether the response was from cache
  * @returns JSON response
  */
-async function handleRequest(apiCall: ApiCall, cacheTtl: number): Promise<Response> {
+async function handleRequest(
+  apiCall: ApiCall,
+  cacheTtl: number,
+  cacheHit = false
+): Promise<Response> {
   const data = await apiCall();
   return new Response(JSON.stringify(data), {
-    headers: createResponseHeaders(cacheTtl),
+    headers: createResponseHeaders(cacheTtl, cacheHit),
   });
 }
 
@@ -131,10 +412,15 @@ async function handleRequest(apiCall: ApiCall, cacheTtl: number): Promise<Respon
  *
  * @param query - The search query term
  * @param limit - The number of results to return (default: 15)
- * @returns Promise containing the search results as JSON
+ * @param ctx - Execution context for background tasks
+ * @returns Promise containing the search results and cache info
  * @throws Response with 400 status if query is empty
  */
-async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise<unknown> {
+async function searchRequest(
+  query: string | undefined,
+  limit: number,
+  ctx?: ExecutionContext
+): Promise<{ data: unknown; cacheHit: boolean }> {
   if (!query) {
     throw new Response('Missing required query parameter: q', {
       status: 400,
@@ -145,14 +431,14 @@ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise
   const route = 'search';
   const mediaType = 'podcast';
   const searchUrl = `${HOSTNAME}/${route}?media=${mediaType}&term=${encodeURIComponent(query)}&limit=${limit}`;
-  const response = await cachedFetch(searchUrl, CACHE_TTL_SEARCH);
+  const { response, cacheHit } = await cachedFetch(searchUrl, CACHE_TTL_SEARCH, ctx);
 
   // Check if response indicates an error
   if (response.status >= 400) {
     throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
   }
 
-  return response.json();
+  return { data: await response.json(), cacheHit };
 }
 
 /**
@@ -160,19 +446,92 @@ async function searchRequest(query?: string, limit = `${SEARCH_LIMIT}`): Promise
  *
  * @param limit - The number of results to return (default: 15)
  * @param genre - The genre ID filter to apply (optional)
- * @returns Promise containing the top podcasts feed as JSON
+ * @param ctx - Execution context for background tasks
+ * @returns Promise containing the top podcasts feed and cache info
  */
-async function topRequest(limit = `${SEARCH_LIMIT}`, genre = -1): Promise<unknown> {
-  const genreLookupValue = ITUNES_API_GENRES[genre] ? genre : undefined;
-  const topPodcastsUrl = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}/genre=${genreLookupValue}/json`;
-  const response = await cachedFetch(topPodcastsUrl, CACHE_TTL_TOP);
+async function topRequest(
+  limit: number,
+  genre: number,
+  ctx?: ExecutionContext
+): Promise<{ data: unknown; cacheHit: boolean }> {
+  const genreSegment = ITUNES_API_GENRES[genre] ? `/genre=${genre}` : '';
+  const topPodcastsUrl = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}${genreSegment}/json`;
+  const { response, cacheHit } = await cachedFetch(topPodcastsUrl, CACHE_TTL_TOP, ctx);
 
   // Check if response indicates an error
   if (response.status >= 400) {
     throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
   }
 
-  return response.json();
+  return { data: await response.json(), cacheHit };
+}
+
+/**
+ * Health check response - basic liveness
+ */
+function handleHealthCheck(request: Request): Response {
+  const info = {
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    circuitBreaker: circuitBreaker.state,
+    placement: {
+      colo: request.cf?.colo ?? 'unknown',
+      country: request.cf?.country ?? 'unknown',
+    },
+  };
+
+  return new Response(JSON.stringify(info), {
+    headers: {
+      'content-type': 'application/json;charset=UTF-8',
+      'Cache-Control': 'no-store',
+      ...SECURITY_HEADERS,
+    },
+  });
+}
+
+/**
+ * Deep health check - tests upstream connectivity
+ */
+async function handleDeepHealthCheck(request: Request): Promise<Response> {
+  const startTime = Date.now();
+  let upstreamOk = false;
+  let upstreamLatency = 0;
+
+  try {
+    const testUrl = `${HOSTNAME}/search?media=podcast&term=test&limit=1`;
+    const response = await fetch(testUrl);
+    upstreamLatency = Date.now() - startTime;
+    upstreamOk = response.ok;
+  } catch {
+    upstreamLatency = Date.now() - startTime;
+  }
+
+  const info = {
+    status: upstreamOk ? 'healthy' : 'degraded',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0',
+    circuitBreaker: circuitBreaker.state,
+    placement: {
+      colo: request.cf?.colo ?? 'unknown',
+      country: request.cf?.country ?? 'unknown',
+    },
+    upstream: {
+      itunes: {
+        status: upstreamOk ? 'healthy' : 'unhealthy',
+        latencyMs: upstreamLatency,
+      },
+    },
+  };
+
+  return new Response(JSON.stringify(info), {
+    status: upstreamOk ? 200 : 503,
+    headers: {
+      'content-type': 'application/json;charset=UTF-8',
+      'Cache-Control': 'no-store',
+      ...SECURITY_HEADERS,
+    },
+  });
 }
 
 /**
@@ -219,6 +578,7 @@ function getApiSchema(): OpenAPIV3.Document {
               required: false,
               schema: {
                 type: 'string',
+                maxLength: MAX_QUERY_LENGTH,
                 example: 'javascript',
               },
             },
@@ -230,8 +590,8 @@ function getApiSchema(): OpenAPIV3.Document {
               schema: {
                 type: 'integer',
                 default: SEARCH_LIMIT,
-                minimum: 1,
-                maximum: 200,
+                minimum: MIN_LIMIT,
+                maximum: MAX_LIMIT,
                 example: 15,
               },
             },
@@ -300,6 +660,13 @@ function getApiSchema(): OpenAPIV3.Document {
                     ],
                   },
                 },
+                'X-Cache': {
+                  description: 'Cache hit indicator',
+                  schema: {
+                    type: 'string',
+                    enum: ['HIT', 'MISS'],
+                  },
+                },
               },
             },
             '400': {
@@ -307,6 +674,56 @@ function getApiSchema(): OpenAPIV3.Document {
             },
             '405': {
               description: 'Method not allowed - only GET is supported',
+            },
+            '429': {
+              description: 'Rate limit exceeded',
+            },
+          },
+        },
+      },
+      '/health': {
+        get: {
+          summary: 'Health Check',
+          description: 'Basic liveness check returning service status and placement info',
+          operationId: 'healthCheck',
+          responses: {
+            '200': {
+              description: 'Service is healthy',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      status: { type: 'string', enum: ['healthy'] },
+                      timestamp: { type: 'string', format: 'date-time' },
+                      version: { type: 'string' },
+                      circuitBreaker: { type: 'string', enum: ['closed', 'open', 'half-open'] },
+                      placement: {
+                        type: 'object',
+                        properties: {
+                          colo: { type: 'string' },
+                          country: { type: 'string' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/health/deep': {
+        get: {
+          summary: 'Deep Health Check',
+          description: 'Tests upstream iTunes API connectivity',
+          operationId: 'deepHealthCheck',
+          responses: {
+            '200': {
+              description: 'All systems healthy',
+            },
+            '503': {
+              description: 'Upstream service degraded',
             },
           },
         },
@@ -331,8 +748,18 @@ function createErrorResponse(message: string, status: number, statusText: string
       'content-type': 'text/plain;charset=UTF-8',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET',
+      ...SECURITY_HEADERS,
     },
   });
+}
+
+/**
+ * Gets client IP from request for rate limiting
+ */
+function getClientIP(request: Request): string {
+  return (
+    request.headers.get('CF-Connecting-IP') ?? request.headers.get('X-Forwarded-For') ?? 'unknown'
+  );
 }
 
 /**
@@ -340,46 +767,135 @@ function createErrorResponse(message: string, status: number, statusText: string
  * Handles podcast search and discovery requests.
  */
 export default {
-  async fetch(request: Request): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const startTime = Date.now();
+    const requestId = generateRequestId();
+    const { searchParams, pathname } = new URL(request.url);
+
     try {
       // Only allow GET requests
       if (request.method !== 'GET') {
+        log('warn', 'Method not allowed', { requestId, method: request.method });
         return createErrorResponse('Unsupported', 405, 'Method Not Allowed');
       }
 
-      const { searchParams, pathname } = new URL(request.url);
+      // Health check endpoints
+      if (pathname === '/health') {
+        return handleHealthCheck(request);
+      }
+      if (pathname === '/health/deep') {
+        return await handleDeepHealthCheck(request);
+      }
+
+      // Rate limiting (if binding available)
+      if (env.RATE_LIMITER) {
+        const clientIP = getClientIP(request);
+        const { success } = await env.RATE_LIMITER.limit({ key: clientIP });
+        if (!success) {
+          log('warn', 'Rate limit exceeded', { requestId, clientIP });
+          return createErrorResponse('Rate limit exceeded', 429, 'Too Many Requests');
+        }
+      }
 
       // Serve API schema at root path when no query params
       if (pathname === '/' && !searchParams.has('q')) {
+        log('info', 'Schema request', {
+          requestId,
+          path: pathname,
+          duration: Date.now() - startTime,
+        });
         return new Response(JSON.stringify(getApiSchema(), null, 2), {
           headers: {
             'content-type': 'application/json;charset=UTF-8',
             'Access-Control-Allow-Origin': '*',
             'Access-Control-Allow-Methods': 'GET',
             'Cache-Control': `public, max-age=${CACHE_TTL_SCHEMA}, immutable`,
+            ...SECURITY_HEADERS,
           },
         });
       }
 
       const query = searchParams.get('q') ?? undefined;
-      const limit = searchParams.get('limit') ?? undefined;
+      const limitParam = searchParams.get('limit') ?? undefined;
       const genre = parseInt(searchParams.get('genre') ?? '-1', 10);
+
+      // Validate query
+      if (query) {
+        const queryError = validateQuery(query);
+        if (queryError) {
+          log('warn', 'Query validation failed', { requestId, query, error: queryError });
+          return createErrorResponse(queryError, 400, 'Bad Request');
+        }
+      }
+
+      // Validate limit
+      const limitResult = validateLimit(limitParam);
+      if (limitResult instanceof Response) {
+        log('warn', 'Limit validation failed', { requestId, limit: limitParam });
+        return limitResult;
+      }
+      const limit = limitResult;
+
+      // Validate genre
+      const genreError = validateGenre(genre);
+      if (genreError) {
+        log('warn', 'Genre validation failed', { requestId, genre });
+        return genreError;
+      }
 
       // Handle top podcasts request
       if (query === RESERVED_PARAM_TOPPODCASTS) {
-        return handleRequest(() => topRequest(limit, genre), CACHE_TTL_TOP);
+        const { data, cacheHit } = await topRequest(limit, genre, ctx);
+        const duration = Date.now() - startTime;
+        log('info', 'Top podcasts request', {
+          requestId,
+          path: pathname,
+          query,
+          limit,
+          genre,
+          duration,
+          cacheHit,
+          status: 200,
+        });
+        return handleRequest(() => Promise.resolve(data), CACHE_TTL_TOP, cacheHit);
       }
 
       // Handle search request
-      return handleRequest(() => searchRequest(query, limit), CACHE_TTL_SEARCH);
+      const { data, cacheHit } = await searchRequest(query, limit, ctx);
+      const duration = Date.now() - startTime;
+      log('info', 'Search request', {
+        requestId,
+        path: pathname,
+        query,
+        limit,
+        duration,
+        cacheHit,
+        status: 200,
+      });
+      return handleRequest(() => Promise.resolve(data), CACHE_TTL_SEARCH, cacheHit);
     } catch (error) {
+      const duration = Date.now() - startTime;
+
       // Handle thrown Response objects (e.g., from searchRequest validation)
       if (error instanceof Response) {
+        log('warn', 'Request validation error', {
+          requestId,
+          path: pathname,
+          status: error.status,
+          duration,
+        });
         return error;
       }
 
       // Handle other errors
       const errorMessage = error instanceof Error ? error.message : 'Internal Server Error';
+      log('error', 'Request error', {
+        requestId,
+        path: pathname,
+        error: errorMessage,
+        duration,
+        status: 500,
+      });
       return createErrorResponse(errorMessage, 500, 'Internal Server Error');
     }
   },

@@ -12,6 +12,7 @@ permissions:
 
 env:
   NODE_VERSION: '24'
+  WORKER_URL: 'https://podr-service.cascadiacollections.workers.dev'
 
 jobs:
   deploy:
@@ -35,3 +36,26 @@ jobs:
       with:
         apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+    - name: Post-deploy health check
+      run: |
+        echo "Waiting for deployment to propagate..."
+        sleep 10
+
+        echo "Checking health endpoint..."
+        RESPONSE=$(curl -sf "${{ env.WORKER_URL }}/health" || echo "FAILED")
+
+        if [ "$RESPONSE" = "FAILED" ]; then
+          echo "Health check failed - endpoint unreachable"
+          exit 1
+        fi
+
+        STATUS=$(echo "$RESPONSE" | jq -r '.status')
+        if [ "$STATUS" != "healthy" ]; then
+          echo "Health check failed - status: $STATUS"
+          echo "Response: $RESPONSE"
+          exit 1
+        fi
+
+        echo "Health check passed"
+        echo "$RESPONSE" | jq .
