@@ -1789,4 +1789,303 @@ describe('Podr Service Worker', () => {
       expect(mockCtxForR2.waitUntil).toHaveBeenCalled();
     });
   });
+
+  describe('related podcasts endpoint', () => {
+    const mockPodcastLookupForRelated = {
+      resultCount: 1,
+      results: [
+        {
+          wrapperType: 'track',
+          kind: 'podcast',
+          trackId: 1535809341,
+          trackName: 'Test Podcast',
+          artworkUrl600: 'https://example.com/artwork.jpg',
+          feedUrl: 'https://example.com/feed.xml',
+          genres: ['Technology', 'News'],
+        },
+      ],
+    };
+
+    const mockSearchResponse = {
+      resultCount: 3,
+      results: [
+        {
+          collectionId: 1535809341,
+          collectionName: 'Test Podcast',
+          artworkUrl600: 'https://example.com/artwork1.jpg',
+          artistName: 'Artist 1',
+          feedUrl: 'https://example.com/feed1.xml',
+          genres: ['Technology'],
+        },
+        {
+          collectionId: 2000000001,
+          collectionName: 'Similar Podcast 1',
+          artworkUrl600: 'https://example.com/artwork2.jpg',
+          artistName: 'Artist 2',
+          feedUrl: 'https://example.com/feed2.xml',
+          genres: ['Technology'],
+        },
+        {
+          collectionId: 2000000002,
+          collectionName: 'Similar Podcast 2',
+          artworkUrl600: 'https://example.com/artwork3.jpg',
+          artistName: 'Artist 3',
+          feedUrl: 'https://example.com/feed3.xml',
+          genres: ['Technology'],
+        },
+      ],
+    };
+
+    beforeEach(() => {
+      const mockCache = {
+        match: jest.fn(() => Promise.resolve(undefined)),
+        put: jest.fn(() => Promise.resolve()),
+      };
+
+      global.caches = {
+        default: mockCache,
+      } as unknown as CacheStorage;
+    });
+
+    test('should return related podcasts for valid ID', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      let callCount = 0;
+      global.fetch = jest.fn(() => {
+        callCount++;
+        const response = callCount === 1 ? mockPodcastLookupForRelated : mockSearchResponse;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(response),
+        } as unknown as Response);
+      });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json;charset=UTF-8');
+
+      const body = await response.json();
+      expect(body).toHaveProperty('related');
+      expect(body).toHaveProperty('sourceId', 1535809341);
+      expect(body).toHaveProperty('matchedBy', 'genre');
+
+      // Should return related podcasts, excluding the source podcast
+      expect(body.related.length).toBeGreaterThan(0);
+      expect(body.related.every((p: { trackId: number }) => p.trackId !== 1535809341)).toBe(true);
+    });
+
+    test('should return empty array for unknown podcast ID', async () => {
+      const url = 'http://localhost:8787/related?id=9999999999';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve({ resultCount: 0, results: [] }),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(200);
+
+      const body = await response.json();
+      expect(body).toHaveProperty('related');
+      expect(body.related).toEqual([]);
+      expect(body).toHaveProperty('sourceId', 9999999999);
+      expect(body).toHaveProperty('matchedBy', 'genre');
+    });
+
+    test('should respect limit parameter (1-20)', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341&limit=5';
+      const request = new Request(url, { method: 'GET' });
+
+      let callCount = 0;
+      global.fetch = jest.fn(() => {
+        callCount++;
+        const response = callCount === 1 ? mockPodcastLookupForRelated : mockSearchResponse;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(response),
+        } as unknown as Response);
+      });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(200);
+
+      const body = await response.json();
+      expect(body.related.length).toBeLessThanOrEqual(5);
+    });
+
+    test('should clamp limit to valid range', async () => {
+      // Test limit above max (should clamp to 20)
+      const url = 'http://localhost:8787/related?id=1535809341&limit=50';
+      const request = new Request(url, { method: 'GET' });
+
+      let callCount = 0;
+      global.fetch = jest.fn(() => {
+        callCount++;
+        const response = callCount === 1 ? mockPodcastLookupForRelated : mockSearchResponse;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(response),
+        } as unknown as Response);
+      });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(200);
+      // The request should succeed (limit clamped to max 20)
+    });
+
+    test('should return 400 for missing id parameter', async () => {
+      const url = 'http://localhost:8787/related';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(400);
+    });
+
+    test('should return 400 for invalid id parameter', async () => {
+      const url = 'http://localhost:8787/related?id=abc';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(400);
+    });
+
+    test('should return 400 for negative id parameter', async () => {
+      const url = 'http://localhost:8787/related?id=-123';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(400);
+    });
+
+    test('should cache related response for 4 hours', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      let callCount = 0;
+      global.fetch = jest.fn(() => {
+        callCount++;
+        const response = callCount === 1 ? mockPodcastLookupForRelated : mockSearchResponse;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(response),
+        } as unknown as Response);
+      });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.headers.get('Cache-Control')).toContain('max-age=14400'); // 4 hours
+    });
+
+    test('should include /related in schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+      const schema = await response.json();
+
+      expect(schema.paths).toHaveProperty('/related');
+      expect(schema.paths['/related'].get).toHaveProperty('summary', 'Related Podcasts');
+      expect(schema.paths['/related'].get).toHaveProperty('operationId', 'relatedPodcasts');
+    });
+
+    test('should include X-Cache header', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      let callCount = 0;
+      global.fetch = jest.fn(() => {
+        callCount++;
+        const response = callCount === 1 ? mockPodcastLookupForRelated : mockSearchResponse;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(response),
+        } as unknown as Response);
+      });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.headers.get('X-Cache')).toBe('MISS');
+    });
+
+    test('should include security headers', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      let callCount = 0;
+      global.fetch = jest.fn(() => {
+        callCount++;
+        const response = callCount === 1 ? mockPodcastLookupForRelated : mockSearchResponse;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(response),
+        } as unknown as Response);
+      });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+      expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+      expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
+    });
+  });
 });
