@@ -1074,7 +1074,8 @@ async function topRequest(
     // Use container to fetch from iTunes (avoids 403)
     const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
     const container = env.ITUNES_PROXY.get(containerId);
-    const proxyUrl = `/?url=${encodeURIComponent(topPodcastsUrl)}`;
+    // Container fetch requires absolute URL - hostname is ignored, only path matters
+    const proxyUrl = `http://container/?url=${encodeURIComponent(topPodcastsUrl)}`;
     response = await container.fetch(proxyUrl);
   } else {
     // Fallback to direct fetch (may get 403)
@@ -1118,7 +1119,8 @@ async function revalidateTopPodcastsCache(
     if (env.ITUNES_PROXY) {
       const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
       const container = env.ITUNES_PROXY.get(containerId);
-      const proxyUrl = `/?url=${encodeURIComponent(url)}`;
+      // Container fetch requires absolute URL - hostname is ignored, only path matters
+      const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
       response = await container.fetch(proxyUrl);
     } else {
       response = await fetch(url);
