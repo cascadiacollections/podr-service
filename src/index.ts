@@ -563,8 +563,9 @@ async function podcastIndexSearch(
  *
  * @param env - Environment bindings
  * @param query - The search query to track
+ * @param country - ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB')
  */
-async function trackSearchQuery(env: Env, query: string): Promise<void> {
+async function trackSearchQuery(env: Env, query: string, country?: string): Promise<void> {
   if (!env.DB) return;
 
   try {
@@ -574,23 +575,25 @@ async function trackSearchQuery(env: Env, query: string): Promise<void> {
 
     const queryHash = await hashQuery(normalized);
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    // Normalize country to uppercase, null if not provided
+    const normalizedCountry = country?.toUpperCase() ?? null;
 
     // Upsert: try to update first, insert if no rows affected
     const updateResult = await env.DB.prepare(
       `UPDATE search_queries
        SET search_count = search_count + 1, updated_at = datetime('now')
-       WHERE query_hash = ? AND date = ?`
+       WHERE query_hash = ? AND date = ? AND (country = ? OR (country IS NULL AND ? IS NULL))`
     )
-      .bind(queryHash, today)
+      .bind(queryHash, today, normalizedCountry, normalizedCountry)
       .run();
 
     // If no rows were updated, insert new row
     if (updateResult.meta?.rows_written === 0) {
       await env.DB.prepare(
-        `INSERT INTO search_queries (query_hash, query_normalized, date)
-         VALUES (?, ?, ?)`
+        `INSERT INTO search_queries (query_hash, query_normalized, date, country)
+         VALUES (?, ?, ?, ?)`
       )
-        .bind(queryHash, normalized, today)
+        .bind(queryHash, normalized, today, normalizedCountry)
         .run();
     }
   } catch (error) {
@@ -650,12 +653,18 @@ async function getSuggestions(env: Env, prefix: string, limit = 5): Promise<stri
 /**
  * Gets trending search queries from D1
  * Returns top queries from the last 7 days
+ * If country is specified, returns country-specific trending queries with fallback to global
  *
  * @param env - Environment bindings
  * @param limit - Number of trending queries to return (default: 10)
+ * @param country - ISO 3166-1 alpha-2 country code to filter by (optional)
  * @returns Array of trending queries with counts
  */
-async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]> {
+async function getTrendingQueries(
+  env: Env,
+  limit = 10,
+  country?: string
+): Promise<TrendingQuery[]> {
   if (!env.DB) return [];
 
   try {
@@ -664,16 +673,50 @@ async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]
     weekAgo.setDate(weekAgo.getDate() - 7);
     const weekAgoStr = weekAgo.toISOString().slice(0, 10);
 
-    const result = await env.DB.prepare(
-      `SELECT query_normalized, SUM(search_count) as total_count
-       FROM search_queries
-       WHERE date >= ?
-       GROUP BY query_hash
-       ORDER BY total_count DESC
-       LIMIT ?`
-    )
-      .bind(weekAgoStr, limit)
-      .all<TrendingQuery>();
+    // Normalize country to uppercase
+    const normalizedCountry = country?.toUpperCase();
+
+    let result: D1Result<TrendingQuery>;
+
+    if (normalizedCountry) {
+      // Try country-specific trending first
+      result = await env.DB.prepare(
+        `SELECT query_normalized, SUM(search_count) as total_count
+         FROM search_queries
+         WHERE date >= ? AND country = ?
+         GROUP BY query_hash
+         ORDER BY total_count DESC
+         LIMIT ?`
+      )
+        .bind(weekAgoStr, normalizedCountry, limit)
+        .all<TrendingQuery>();
+
+      // Fallback to global trending if no country-specific data
+      if (result.results.length === 0) {
+        result = await env.DB.prepare(
+          `SELECT query_normalized, SUM(search_count) as total_count
+           FROM search_queries
+           WHERE date >= ?
+           GROUP BY query_hash
+           ORDER BY total_count DESC
+           LIMIT ?`
+        )
+          .bind(weekAgoStr, limit)
+          .all<TrendingQuery>();
+      }
+    } else {
+      // Global trending (no country filter)
+      result = await env.DB.prepare(
+        `SELECT query_normalized, SUM(search_count) as total_count
+         FROM search_queries
+         WHERE date >= ?
+         GROUP BY query_hash
+         ORDER BY total_count DESC
+         LIMIT ?`
+      )
+        .bind(weekAgoStr, limit)
+        .all<TrendingQuery>();
+    }
 
     return result.results;
   } catch (error) {
@@ -1806,7 +1849,7 @@ function getApiSchema(): OpenAPIV3.Document {
         get: {
           summary: 'Trending Queries',
           description:
-            'Returns trending podcast search queries from the last 7 days. Feature-flagged endpoint - returns 404 when disabled.',
+            'Returns trending podcast search queries from the last 7 days. Feature-flagged endpoint - returns 404 when disabled. Supports geographic filtering with fallback to global trending.',
           operationId: 'trendingQueries',
           parameters: [
             {
@@ -1819,6 +1862,18 @@ function getApiSchema(): OpenAPIV3.Document {
                 default: 10,
                 minimum: 1,
                 maximum: 50,
+              },
+            },
+            {
+              name: 'country',
+              in: 'query',
+              description:
+                'ISO 3166-1 alpha-2 country code to filter trending queries (e.g., US, GB, JP). Falls back to global trending if no country-specific data available.',
+              required: false,
+              schema: {
+                type: 'string',
+                pattern: '^[A-Za-z]{2}$',
+                example: 'US',
               },
             },
           ],
@@ -1847,6 +1902,12 @@ function getApiSchema(): OpenAPIV3.Document {
                         type: 'string',
                         description: 'Time period for trending data',
                         example: '7d',
+                      },
+                      country: {
+                        type: 'string',
+                        description:
+                          'Country code for the trending data, or "global" if no country filter',
+                        example: 'US',
                       },
                       generatedAt: {
                         type: 'string',
@@ -2244,12 +2305,19 @@ export default {
 
         const limitParam = searchParams.get('limit');
         const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 10, 1), 50) : 10;
-        const trending = await getTrendingQueries(env, limit);
+        const countryParam = searchParams.get('country');
+        // Validate country code format (2 uppercase letters)
+        const country =
+          countryParam && /^[A-Za-z]{2}$/.test(countryParam)
+            ? countryParam.toUpperCase()
+            : undefined;
+        const trending = await getTrendingQueries(env, limit, country);
 
         const duration = Date.now() - startTime;
         log('info', 'Trending queries request', {
           requestId,
           limit,
+          country,
           resultCount: trending.length,
           duration,
         });
@@ -2262,6 +2330,7 @@ export default {
               count: t.total_count,
             })),
             period: '7d',
+            country: country ?? 'global',
             generatedAt: new Date().toISOString(),
           }),
           {
@@ -2548,7 +2617,8 @@ export default {
 
       // Track search query for trending (non-blocking)
       if (query && resultCount > 0) {
-        ctx.waitUntil(trackSearchQuery(env, query));
+        const requestCountry = (request.cf?.country as string) ?? undefined;
+        ctx.waitUntil(trackSearchQuery(env, query, requestCountry));
       }
 
       // Export to R2 data lake (non-blocking, feature-flagged)
