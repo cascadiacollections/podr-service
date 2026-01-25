@@ -424,6 +424,32 @@ const MAX_SUMMARY_LENGTH = 200 as const;
 const AI_MODEL = '@cf/meta/llama-2-7b-chat-int8' as const;
 
 /**
+ * Timeout for AI summary generation (in milliseconds)
+ */
+const AI_TIMEOUT_MS = 10000 as const;
+
+/**
+ * Number of episode descriptions to use as fallback when podcast description is unavailable
+ */
+const FALLBACK_EPISODE_COUNT = 3 as const;
+
+/**
+ * Truncates text to the maximum length, preferring to end at a sentence boundary.
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum allowed length
+ * @returns Truncated text
+ */
+function truncateToMaxLength(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const truncated = text.substring(0, maxLength);
+  const lastPeriod = truncated.lastIndexOf('.');
+  return lastPeriod > 0 ? truncated.substring(0, lastPeriod + 1) : truncated + '...';
+}
+
+/**
  * Generates KV cache key for podcast summary
  */
 function getSummaryCacheKey(podcastId: number): string {
@@ -504,9 +530,18 @@ Description: ${description}
 
 Summary:`;
 
-    const response = await env.AI.run(AI_MODEL, {
-      messages: [{ role: 'user', content: prompt }],
-    });
+    // Use AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+
+    let response: { response?: string };
+    try {
+      response = await env.AI.run(AI_MODEL, {
+        messages: [{ role: 'user', content: prompt }],
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!response.response) {
       log('warn', 'AI returned empty response for summary', { podcastName });
@@ -514,13 +549,7 @@ Summary:`;
     }
 
     // Trim and limit the summary length
-    let summary = response.response.trim();
-    if (summary.length > MAX_SUMMARY_LENGTH) {
-      // Truncate at the last complete sentence within the limit
-      const truncated = summary.substring(0, MAX_SUMMARY_LENGTH);
-      const lastPeriod = truncated.lastIndexOf('.');
-      summary = lastPeriod > 0 ? truncated.substring(0, lastPeriod + 1) : truncated + '...';
-    }
+    const summary = truncateToMaxLength(response.response.trim(), MAX_SUMMARY_LENGTH);
 
     return summary;
   } catch (error) {
@@ -1507,7 +1536,7 @@ async function podcastDetailRequest(
       const podcastDescription =
         podcastData.description ||
         episodes
-          .slice(0, 3)
+          .slice(0, FALLBACK_EPISODE_COUNT)
           .map((ep) => ep.description)
           .filter(Boolean)
           .join(' ');
