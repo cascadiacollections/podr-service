@@ -74,6 +74,16 @@ interface AnalyticsEngine {
 }
 
 /**
+ * Workers AI binding
+ */
+interface Ai {
+  run: (
+    model: string,
+    input: { messages: Array<{ role: string; content: string }> }
+  ) => Promise<{ response?: string }>;
+}
+
+/**
  * KV namespace binding
  */
 interface KVNamespace {
@@ -177,6 +187,7 @@ interface FeatureFlags {
   enhancedCaching: boolean;
   analyticsExport: boolean;
   podcastIndex: boolean;
+  podcastSummaries: boolean;
 }
 
 /**
@@ -188,6 +199,7 @@ const DEFAULT_FLAGS: FeatureFlags = {
   enhancedCaching: false,
   analyticsExport: false,
   podcastIndex: false,
+  podcastSummaries: false,
 };
 
 /**
@@ -198,6 +210,7 @@ interface Env {
     limit: (options: { key: string }) => Promise<{ success: boolean }>;
   };
   ANALYTICS?: AnalyticsEngine;
+  AI?: Ai;
   FLAGS?: KVNamespace;
   DB?: D1Database;
   ANALYTICS_LAKE?: R2Bucket;
@@ -282,6 +295,7 @@ const CACHE_TTL_TOP = 7200 as const; // 2 hours for top podcasts (RSS updates sl
 const CACHE_TTL_PODCAST_DETAIL = 14400 as const; // 4 hours for podcast details (metadata rarely changes)
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
 const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
+const CACHE_TTL_SUMMARY = 2592000 as const; // 30 days for AI-generated summaries (they don't change)
 
 /**
  * Episode limit for podcast detail response
@@ -397,6 +411,189 @@ async function hashQuery(query: string): Promise<string> {
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Maximum length for AI-generated summaries
+ */
+const MAX_SUMMARY_LENGTH = 200 as const;
+
+/**
+ * Workers AI model for text generation
+ */
+const AI_MODEL = '@cf/meta/llama-2-7b-chat-int8' as const;
+
+/**
+ * Timeout for AI summary generation (in milliseconds)
+ */
+const AI_TIMEOUT_MS = 10000 as const;
+
+/**
+ * Number of episode descriptions to use as fallback when podcast description is unavailable
+ */
+const FALLBACK_EPISODE_COUNT = 3 as const;
+
+/**
+ * Truncates text to the maximum length, preferring to end at a sentence boundary.
+ *
+ * @param text - The text to truncate
+ * @param maxLength - Maximum allowed length
+ * @returns Truncated text
+ */
+function truncateToMaxLength(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  const truncated = text.substring(0, maxLength);
+  const lastPeriod = truncated.lastIndexOf('.');
+  return lastPeriod > 0 ? truncated.substring(0, lastPeriod + 1) : truncated + '...';
+}
+
+/**
+ * Generates KV cache key for podcast summary
+ */
+function getSummaryCacheKey(podcastId: number): string {
+  return `summary:${podcastId}`;
+}
+
+/**
+ * Retrieves a cached podcast summary from KV
+ *
+ * @param env - Environment bindings
+ * @param podcastId - The iTunes podcast ID
+ * @returns Cached summary or null if not found
+ */
+async function getCachedSummary(env: Env, podcastId: number): Promise<string | null> {
+  if (!env.FLAGS) return null;
+
+  try {
+    const cacheKey = getSummaryCacheKey(podcastId);
+    return await env.FLAGS.get(cacheKey);
+  } catch (error) {
+    log('error', 'Failed to get cached summary', {
+      podcastId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return null;
+  }
+}
+
+/**
+ * Caches a podcast summary in KV
+ *
+ * @param env - Environment bindings
+ * @param podcastId - The iTunes podcast ID
+ * @param summary - The summary to cache
+ */
+async function cacheSummary(env: Env, podcastId: number, summary: string): Promise<void> {
+  if (!env.FLAGS) return;
+
+  try {
+    const cacheKey = getSummaryCacheKey(podcastId);
+    await env.FLAGS.put(cacheKey, summary, { expirationTtl: CACHE_TTL_SUMMARY });
+  } catch (error) {
+    log('error', 'Failed to cache summary', {
+      podcastId,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+}
+
+/**
+ * Generates an AI-powered summary for a podcast description
+ *
+ * @param env - Environment bindings
+ * @param podcastName - The podcast name
+ * @param description - The podcast description to summarize
+ * @returns Generated summary or null if AI unavailable
+ */
+async function generatePodcastSummary(
+  env: Env,
+  podcastName: string,
+  description: string
+): Promise<string | null> {
+  if (!env.AI) {
+    log('warn', 'AI binding not available for summary generation');
+    return null;
+  }
+
+  // Skip if no description to summarize
+  if (!description || description.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const prompt = `Summarize this podcast in 2-3 concise sentences (max ${MAX_SUMMARY_LENGTH} characters). Focus on what the podcast is about and who it's for. Do not include any preamble or phrases like "Here is a summary". Just provide the summary directly.
+
+Podcast: ${podcastName}
+Description: ${description}
+
+Summary:`;
+
+    // Use AbortController for timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+
+    let response: { response?: string };
+    try {
+      response = await env.AI.run(AI_MODEL, {
+        messages: [{ role: 'user', content: prompt }],
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!response.response) {
+      log('warn', 'AI returned empty response for summary', { podcastName });
+      return null;
+    }
+
+    // Trim and limit the summary length
+    const summary = truncateToMaxLength(response.response.trim(), MAX_SUMMARY_LENGTH);
+
+    return summary;
+  } catch (error) {
+    log('error', 'Failed to generate podcast summary', {
+      podcastName,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return null;
+  }
+}
+
+/**
+ * Gets or generates a podcast summary
+ * First checks KV cache, then generates via AI if not cached
+ *
+ * @param env - Environment bindings
+ * @param podcastId - The iTunes podcast ID
+ * @param podcastName - The podcast name
+ * @param description - The podcast description
+ * @param ctx - Execution context for background tasks
+ * @returns Summary string or null if unavailable
+ */
+async function getPodcastSummary(
+  env: Env,
+  podcastId: number,
+  podcastName: string,
+  description: string,
+  ctx?: ExecutionContext
+): Promise<string | null> {
+  // Check cache first
+  const cachedSummary = await getCachedSummary(env, podcastId);
+  if (cachedSummary) {
+    log('info', 'Summary cache hit', { podcastId });
+    return cachedSummary;
+  }
+
+  // Generate new summary
+  const summary = await generatePodcastSummary(env, podcastName, description);
+  if (summary && ctx) {
+    // Cache in background
+    ctx.waitUntil(cacheSummary(env, podcastId, summary));
+  }
+
+  return summary;
 }
 
 /**
@@ -1246,6 +1443,7 @@ interface PodcastDetailResponse {
     trackTimeMillis?: number;
     description?: string;
   }>;
+  summary?: string;
 }
 
 /**
@@ -1253,14 +1451,17 @@ interface PodcastDetailResponse {
  * Fetches podcast metadata and recent episodes using the lookup API.
  *
  * @param podcastId - The iTunes podcast ID
+ * @param env - Environment bindings
  * @param ctx - Execution context for background tasks
+ * @param includeSummary - Whether to include an AI-generated summary
  * @returns Promise containing the podcast details and episodes with cache info
  * @throws Response with 404 status if podcast not found
  */
 async function podcastDetailRequest(
   podcastId: number,
   env: Env,
-  ctx?: ExecutionContext
+  ctx?: ExecutionContext,
+  includeSummary = false
 ): Promise<{ data: PodcastDetailResponse; cacheHit: boolean }> {
   // Fetch podcast with episodes using lookup API via container proxy
   const lookupUrl = `${HOSTNAME}/lookup?id=${podcastId}&entity=podcastEpisode&limit=${PODCAST_EPISODE_LIMIT}`;
@@ -1326,6 +1527,34 @@ async function podcastDetailRequest(
     },
     episodes,
   };
+
+  // Generate summary if requested and feature flagged
+  if (includeSummary) {
+    const summaryEnabled = await getFlag(env, 'podcastSummaries');
+    if (summaryEnabled) {
+      // Use podcast description or concatenate episode descriptions as fallback
+      const podcastDescription =
+        podcastData.description ||
+        episodes
+          .slice(0, FALLBACK_EPISODE_COUNT)
+          .map((ep) => ep.description)
+          .filter(Boolean)
+          .join(' ');
+
+      if (podcastDescription) {
+        const summary = await getPodcastSummary(
+          env,
+          podcastData.trackId,
+          podcastData.trackName,
+          podcastDescription,
+          ctx
+        );
+        if (summary) {
+          podcastResponse.summary = summary;
+        }
+      }
+    }
+  }
 
   return { data: podcastResponse, cacheHit };
 }
@@ -1741,7 +1970,7 @@ function getApiSchema(): OpenAPIV3.Document {
         get: {
           summary: 'Podcast Detail',
           description:
-            'Returns detailed information about a specific podcast including recent episodes.',
+            'Returns detailed information about a specific podcast including recent episodes. Optionally includes an AI-generated summary when the summary query parameter is set to true.',
           operationId: 'podcastDetail',
           parameters: [
             {
@@ -1752,6 +1981,18 @@ function getApiSchema(): OpenAPIV3.Document {
               schema: {
                 type: 'integer',
                 example: 1535809341,
+              },
+            },
+            {
+              name: 'summary',
+              in: 'query',
+              description:
+                'When set to true, includes an AI-generated summary of the podcast (feature-flagged)',
+              required: false,
+              schema: {
+                type: 'string',
+                enum: ['true', 'false'],
+                default: 'false',
               },
             },
           ],
@@ -1797,6 +2038,12 @@ function getApiSchema(): OpenAPIV3.Document {
                           },
                         },
                         description: 'List of recent episodes (up to 20)',
+                      },
+                      summary: {
+                        type: 'string',
+                        description:
+                          'AI-generated summary of the podcast (only included when summary=true and feature is enabled)',
+                        maxLength: 200,
                       },
                     },
                   },
@@ -2026,7 +2273,10 @@ export default {
           return createErrorResponse('Invalid podcast ID', 400, 'Bad Request');
         }
 
-        const { data, cacheHit } = await podcastDetailRequest(podcastId, env, ctx);
+        // Check for summary query parameter
+        const includeSummary = searchParams.get('summary') === 'true';
+
+        const { data, cacheHit } = await podcastDetailRequest(podcastId, env, ctx, includeSummary);
         const duration = Date.now() - startTime;
 
         log('info', 'Podcast detail request', {
@@ -2034,6 +2284,8 @@ export default {
           path: pathname,
           podcastId,
           episodeCount: data.episodes.length,
+          includeSummary,
+          hasSummary: !!data.summary,
           duration,
           cacheHit,
           status: 200,
