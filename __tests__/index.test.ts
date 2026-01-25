@@ -1571,7 +1571,7 @@ describe('Podr Service Worker', () => {
 
       const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
 
-      // Should not match the /podcast/:id pattern with non-numeric ID
+      // Non-numeric ID doesn't match /podcast/:id pattern, falls through to search which requires ?q=
       expect(response.status).toBe(400);
     });
 
@@ -1581,7 +1581,7 @@ describe('Podr Service Worker', () => {
 
       const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
 
-      // Should not match the /podcast/:id pattern with negative ID
+      // Negative ID doesn't match /podcast/:id pattern (\\d+ only matches digits), falls through to search
       expect(response.status).toBe(400);
     });
 

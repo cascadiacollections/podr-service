@@ -936,6 +936,14 @@ async function podcastDetailRequest(
     });
   }
 
+  // Validate required fields exist
+  if (!podcastData.trackId || !podcastData.trackName) {
+    throw new Response('Invalid podcast data', {
+      status: 404,
+      statusText: 'Not Found',
+    });
+  }
+
   const episodes = lookupResult.results
     .filter((r) => r.wrapperType === 'track' && r.kind === 'podcast-episode')
     .map((ep) => ({
@@ -948,8 +956,8 @@ async function podcastDetailRequest(
 
   const podcastResponse: PodcastDetailResponse = {
     podcast: {
-      trackId: podcastData.trackId!,
-      trackName: podcastData.trackName!,
+      trackId: podcastData.trackId,
+      trackName: podcastData.trackName,
       artworkUrl600: podcastData.artworkUrl600,
       feedUrl: podcastData.feedUrl,
       genres: podcastData.genres,
