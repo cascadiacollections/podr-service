@@ -2087,5 +2087,144 @@ describe('Podr Service Worker', () => {
       expect(response.headers.get('X-Frame-Options')).toBe('DENY');
       expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
     });
+
+    test('should return empty array when podcast has no genres', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockPodcastNoGenres = {
+        resultCount: 1,
+        results: [
+          {
+            wrapperType: 'track',
+            kind: 'podcast',
+            trackId: 1535809341,
+            trackName: 'Test Podcast',
+            artworkUrl600: 'https://example.com/artwork.jpg',
+            feedUrl: 'https://example.com/feed.xml',
+            genres: [],
+          },
+        ],
+      };
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(mockPodcastNoGenres),
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(200);
+
+      const body = await response.json();
+      expect(body).toHaveProperty('related');
+      expect(body.related).toEqual([]);
+      expect(body).toHaveProperty('sourceId', 1535809341);
+      expect(body).toHaveProperty('matchedBy', 'genre');
+    });
+
+    test('should handle iTunes lookup API errors gracefully', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+        } as unknown as Response)
+      );
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(500);
+    });
+
+    test('should handle iTunes search API errors gracefully', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      let callCount = 0;
+      global.fetch = jest.fn(() => {
+        callCount++;
+        if (callCount === 1) {
+          // First call (lookup) succeeds
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            clone: () => ({
+              body: null,
+              status: 200,
+              statusText: 'OK',
+              headers: new Headers(),
+            }),
+            json: () => Promise.resolve(mockPodcastLookupForRelated),
+          } as unknown as Response);
+        }
+        // Second call (search) fails
+        return Promise.resolve({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+        } as unknown as Response);
+      });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(500);
+    });
+
+    test('should export related events to R2', async () => {
+      const url = 'http://localhost:8787/related?id=1535809341';
+      const request = new Request(url, { method: 'GET' });
+
+      let callCount = 0;
+      global.fetch = jest.fn(() => {
+        callCount++;
+        const response = callCount === 1 ? mockPodcastLookupForRelated : mockSearchResponse;
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(response),
+        } as unknown as Response);
+      });
+
+      const mockR2 = {
+        put: jest.fn(() =>
+          Promise.resolve({ key: 'test', size: 100, etag: 'abc', uploaded: new Date() })
+        ),
+        get: jest.fn(() => Promise.resolve(null)),
+        list: jest.fn(() => Promise.resolve({ objects: [], truncated: false })),
+        head: jest.fn(() => Promise.resolve(null)),
+      };
+
+      const mockEnvWithR2 = {
+        ANALYTICS_LAKE: mockR2,
+      };
+
+      const mockCtxForR2 = {
+        waitUntil: jest.fn(),
+        passThroughOnException: jest.fn(),
+      } as unknown as ExecutionContext;
+
+      await worker.fetch(request, mockEnvWithR2, mockCtxForR2);
+
+      expect(mockCtxForR2.waitUntil).toHaveBeenCalled();
+    });
   });
 });
