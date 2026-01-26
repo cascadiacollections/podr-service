@@ -566,18 +566,18 @@ Summary:`;
 
     // Enforce timeout for AI request using Promise.race
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise: Promise<never> = new Promise((_, reject) => {
+
+    const aiPromise = env.AI.run(AI_MODEL, {
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const timeoutPromise = new Promise<{ response?: string }>((_, reject) => {
       timeoutId = setTimeout(() => reject(new Error('AI request timed out')), AI_TIMEOUT_MS);
     });
 
     let response: { response?: string };
     try {
-      response = (await Promise.race([
-        env.AI.run(AI_MODEL, {
-          messages: [{ role: 'user', content: prompt }],
-        }),
-        timeoutPromise,
-      ])) as { response?: string };
+      response = await Promise.race([aiPromise, timeoutPromise]);
     } finally {
       if (timeoutId !== undefined) {
         clearTimeout(timeoutId);
