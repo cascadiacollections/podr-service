@@ -419,6 +419,11 @@ async function hashQuery(query: string): Promise<string> {
 const MAX_SUMMARY_LENGTH = 200 as const;
 
 /**
+ * Maximum input description length for AI summarization (prevents context overflow and reduces costs)
+ */
+const MAX_DESCRIPTION_LENGTH = 5000 as const;
+
+/**
  * Workers AI model for text generation
  */
 const AI_MODEL = '@cf/meta/llama-2-7b-chat-int8' as const;
@@ -447,6 +452,31 @@ function truncateToMaxLength(text: string, maxLength: number): string {
   const truncated = text.substring(0, maxLength);
   const lastPeriod = truncated.lastIndexOf('.');
   return lastPeriod > 0 ? truncated.substring(0, lastPeriod + 1) : truncated + '...';
+}
+
+/**
+ * Sanitizes input text for AI prompt to mitigate prompt injection attacks.
+ * Removes potential instruction-like patterns and limits length.
+ *
+ * @param text - The text to sanitize
+ * @param maxLength - Maximum allowed length
+ * @returns Sanitized text
+ */
+function sanitizeForAIPrompt(text: string, maxLength: number): string {
+  // Truncate to max length first
+  let sanitized = text.length > maxLength ? text.substring(0, maxLength) : text;
+
+  // Remove common prompt injection patterns
+  sanitized = sanitized
+    .replace(/ignore\s+(previous|all|above)\s+instructions?/gi, '')
+    .replace(/disregard\s+(previous|all|above)/gi, '')
+    .replace(/forget\s+(everything|all|previous)/gi, '')
+    .replace(/new\s+instructions?:/gi, '')
+    .replace(/system\s*:/gi, '')
+    .replace(/assistant\s*:/gi, '')
+    .replace(/user\s*:/gi, '');
+
+  return sanitized.trim();
 }
 
 /**
@@ -523,28 +553,39 @@ async function generatePodcastSummary(
   }
 
   try {
+    // Sanitize inputs to mitigate prompt injection and limit length
+    const sanitizedName = sanitizeForAIPrompt(podcastName, 200);
+    const sanitizedDescription = sanitizeForAIPrompt(description, MAX_DESCRIPTION_LENGTH);
+
     const prompt = `Summarize this podcast in 2-3 concise sentences (max ${MAX_SUMMARY_LENGTH} characters). Focus on what the podcast is about and who it's for. Do not include any preamble or phrases like "Here is a summary". Just provide the summary directly.
 
-Podcast: ${podcastName}
-Description: ${description}
+Podcast: ${sanitizedName}
+Description: ${sanitizedDescription}
 
 Summary:`;
 
-    // Use AbortController for timeout
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+    // Enforce timeout for AI request using Promise.race
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise: Promise<never> = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => reject(new Error('AI request timed out')), AI_TIMEOUT_MS);
+    });
 
     let response: { response?: string };
     try {
-      response = await env.AI.run(AI_MODEL, {
-        messages: [{ role: 'user', content: prompt }],
-      });
+      response = (await Promise.race([
+        env.AI.run(AI_MODEL, {
+          messages: [{ role: 'user', content: prompt }],
+        }),
+        timeoutPromise,
+      ])) as { response?: string };
     } finally {
-      clearTimeout(timeoutId);
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
     }
 
     if (!response.response) {
-      log('warn', 'AI returned empty response for summary', { podcastName });
+      log('warn', 'AI returned empty response for summary', { podcastName: sanitizedName });
       return null;
     }
 
