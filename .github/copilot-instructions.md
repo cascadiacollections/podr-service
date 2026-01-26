@@ -89,11 +89,17 @@ Stored in KV with prefix `flag:`:
 ### Before Making Changes
 
 ```bash
-# Install dependencies
-yarn install
+# Enable Yarn 4 via Corepack (required)
+corepack enable
+
+# Install dependencies (Yarn 4, immutable)
+yarn install --immutable
 
 # Run linter
 yarn lint
+
+# Check formatting (CI uses this)
+yarn format:check
 
 # Run tests
 yarn test
@@ -115,6 +121,7 @@ yarn build
 - `yarn dev` - Start local development server with Wrangler
 - `yarn lint:fix` - Auto-fix linting issues
 - `yarn test:watch` - Run tests in watch mode
+- `yarn format:check` - Verify formatting (runs in CI)
 - `yarn deploy` - Deploy to Cloudflare Workers
 
 ## API Design Principles
