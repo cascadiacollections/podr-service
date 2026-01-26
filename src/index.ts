@@ -1708,7 +1708,7 @@ function getApiSchema(): OpenAPIV3.Document {
                       country: {
                         type: 'string',
                         description:
-                          'Country code for the trending data, or "global" if no country filter',
+                          'Requested country code for the trending data (or "global" if no valid country was provided). Data may fall back to global results when no country-specific data exists.',
                         example: 'US',
                       },
                       generatedAt: {
