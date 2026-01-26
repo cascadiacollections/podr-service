@@ -1809,7 +1809,7 @@ describe('Podr Service Worker', () => {
           kind: 'podcast-episode',
           trackId: 1000000001,
           trackName: 'Episode 1',
-          releaseDate: '2026-01-20T00:00:00Z',
+          releaseDate: '2020-01-20T00:00:00Z',
           trackTimeMillis: 3600000,
           description: 'First episode description',
         },
@@ -2132,6 +2132,134 @@ describe('Podr Service Worker', () => {
         schema.paths['/podcast/{id}'].get.responses['200'].content['application/json'].schema;
       expect(responseSchema.properties).toHaveProperty('summary');
       expect(responseSchema.properties.summary.type).toBe('string');
+    });
+
+    test('should generate summary from episode descriptions when podcast description is missing', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=true';
+      const request = new Request(url, { method: 'GET' });
+
+      // Mock podcast without description, but with episode descriptions
+      const podcastNoDescriptionResponse = {
+        resultCount: 4,
+        results: [
+          {
+            wrapperType: 'track',
+            kind: 'podcast',
+            trackId: 1535809341,
+            trackName: 'Test Podcast Without Description',
+            artworkUrl600: 'https://example.com/artwork.jpg',
+            feedUrl: 'https://example.com/feed.xml',
+            genres: ['Technology'],
+            // No description field
+          },
+          {
+            wrapperType: 'track',
+            kind: 'podcast-episode',
+            trackId: 1000000001,
+            trackName: 'Episode 1',
+            releaseDate: '2020-01-20T00:00:00Z',
+            description: 'First episode about tech news.',
+          },
+          {
+            wrapperType: 'track',
+            kind: 'podcast-episode',
+            trackId: 1000000002,
+            trackName: 'Episode 2',
+            releaseDate: '2020-01-15T00:00:00Z',
+            description: 'Second episode about programming.',
+          },
+          {
+            wrapperType: 'track',
+            kind: 'podcast-episode',
+            trackId: 1000000003,
+            trackName: 'Episode 3',
+            releaseDate: '2020-01-10T00:00:00Z',
+            // No description for this episode
+          },
+        ],
+      };
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(podcastNoDescriptionResponse),
+        } as unknown as Response)
+      );
+
+      const mockAI = createMockAI('Summary generated from episode descriptions.');
+      const mockEnvWithAI = {
+        FLAGS: createMockKVWithSummary(),
+        AI: mockAI,
+      };
+
+      const response = await worker.fetch(request, mockEnvWithAI, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toHaveProperty('summary', 'Summary generated from episode descriptions.');
+      // Verify AI was called (meaning the fallback to episode descriptions worked)
+      expect(mockAI.run).toHaveBeenCalled();
+    });
+
+    test('should handle podcast with fewer episodes than FALLBACK_EPISODE_COUNT', async () => {
+      const url = 'http://localhost:8787/podcast/1535809341?summary=true';
+      const request = new Request(url, { method: 'GET' });
+
+      // Mock podcast without description and only 1 episode
+      const podcastFewEpisodesResponse = {
+        resultCount: 2,
+        results: [
+          {
+            wrapperType: 'track',
+            kind: 'podcast',
+            trackId: 1535809341,
+            trackName: 'Test Podcast Few Episodes',
+            artworkUrl600: 'https://example.com/artwork.jpg',
+            // No description
+          },
+          {
+            wrapperType: 'track',
+            kind: 'podcast-episode',
+            trackId: 1000000001,
+            trackName: 'Only Episode',
+            releaseDate: '2020-01-20T00:00:00Z',
+            description: 'The only episode description.',
+          },
+        ],
+      };
+
+      global.fetch = jest.fn(() =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          clone: () => ({
+            body: null,
+            status: 200,
+            statusText: 'OK',
+            headers: new Headers(),
+          }),
+          json: () => Promise.resolve(podcastFewEpisodesResponse),
+        } as unknown as Response)
+      );
+
+      const mockAI = createMockAI('Summary from single episode.');
+      const mockEnvWithAI = {
+        FLAGS: createMockKVWithSummary(),
+        AI: mockAI,
+      };
+
+      const response = await worker.fetch(request, mockEnvWithAI, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body).toHaveProperty('summary', 'Summary from single episode.');
     });
   });
 });
