@@ -191,6 +191,41 @@ const DEFAULT_FLAGS: FeatureFlags = {
 };
 
 /**
+ * Workers AI binding for text embeddings
+ */
+interface WorkersAI {
+  run: (
+    model: string,
+    inputs: { text: string | string[] }
+  ) => Promise<{ data: number[][] } | { shape: number[]; data: number[][] }>;
+}
+
+/**
+ * Vectorize index binding for semantic search
+ */
+interface VectorizeIndex {
+  query: (
+    vector: number[],
+    options: { topK: number; returnValues?: boolean; returnMetadata?: 'all' | 'indexed' | 'none' }
+  ) => Promise<{ matches: VectorizeMatch[] }>;
+  insert: (vectors: VectorizeVector[]) => Promise<{ ids: string[] }>;
+  upsert: (vectors: VectorizeVector[]) => Promise<{ ids: string[] }>;
+}
+
+interface VectorizeVector {
+  id: string;
+  values: number[];
+  metadata?: Record<string, string | number | boolean>;
+}
+
+interface VectorizeMatch {
+  id: string;
+  score: number;
+  values?: number[];
+  metadata?: Record<string, string | number | boolean>;
+}
+
+/**
  * Environment bindings for the Worker
  */
 interface Env {
@@ -204,6 +239,8 @@ interface Env {
   ITUNES_PROXY?: DurableObjectNamespace;
   PODCAST_INDEX_KEY?: string;
   PODCAST_INDEX_SECRET?: string;
+  AI?: WorkersAI;
+  VECTORIZE?: VectorizeIndex;
 }
 
 /**
@@ -280,14 +317,10 @@ const MAX_LIMIT = 200 as const;
 const CACHE_TTL_SEARCH = 86400 as const; // 24 hours for search results
 const CACHE_TTL_TOP = 7200 as const; // 2 hours for top podcasts (RSS updates slowly)
 const CACHE_TTL_PODCAST_DETAIL = 14400 as const; // 4 hours for podcast details (metadata rarely changes)
-const CACHE_TTL_RELATED = 14400 as const; // 4 hours for related podcasts (similar to detail)
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
 const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
-
-/**
- * Episode limit for podcast detail response
- */
-const PODCAST_EPISODE_LIMIT = 20 as const;
+const CACHE_TTL_SEMANTIC_SEARCH = 3600 as const; // 1 hour for semantic search results
+const CACHE_TTL_RELATED = 14400 as const; // 4 hours for related podcasts (similar to detail)
 
 /**
  * Related podcasts limit configuration
@@ -295,6 +328,17 @@ const PODCAST_EPISODE_LIMIT = 20 as const;
 const MIN_RELATED_LIMIT = 1 as const;
 const MAX_RELATED_LIMIT = 20 as const;
 const DEFAULT_RELATED_LIMIT = 10 as const;
+
+/**
+ * Semantic search configuration
+ */
+const SEMANTIC_SEARCH_MODEL = '@cf/baai/bge-base-en-v1.5' as const;
+const SEMANTIC_SEARCH_TOP_K = 10 as const; // Number of similar results to return
+
+/**
+ * Episode limit for podcast detail response
+ */
+const PODCAST_EPISODE_LIMIT = 20 as const;
 
 /**
  * Circuit Breaker Configuration
@@ -527,8 +571,9 @@ async function podcastIndexSearch(
  *
  * @param env - Environment bindings
  * @param query - The search query to track
+ * @param country - ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB')
  */
-async function trackSearchQuery(env: Env, query: string): Promise<void> {
+async function trackSearchQuery(env: Env, query: string, country?: string): Promise<void> {
   if (!env.DB) return;
 
   try {
@@ -538,23 +583,26 @@ async function trackSearchQuery(env: Env, query: string): Promise<void> {
 
     const queryHash = await hashQuery(normalized);
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    // Normalize country to uppercase, null if not provided
+    const normalizedCountry = country?.toUpperCase() ?? null;
 
     // Upsert: try to update first, insert if no rows affected
+    // Using 'IS' instead of '=' to properly handle NULL comparison in SQLite
     const updateResult = await env.DB.prepare(
       `UPDATE search_queries
        SET search_count = search_count + 1, updated_at = datetime('now')
-       WHERE query_hash = ? AND date = ?`
+       WHERE query_hash = ? AND date = ? AND country IS ?`
     )
-      .bind(queryHash, today)
+      .bind(queryHash, today, normalizedCountry)
       .run();
 
     // If no rows were updated, insert new row
     if (updateResult.meta?.rows_written === 0) {
       await env.DB.prepare(
-        `INSERT INTO search_queries (query_hash, query_normalized, date)
-         VALUES (?, ?, ?)`
+        `INSERT INTO search_queries (query_hash, query_normalized, date, country)
+         VALUES (?, ?, ?, ?)`
       )
-        .bind(queryHash, normalized, today)
+        .bind(queryHash, normalized, today, normalizedCountry)
         .run();
     }
   } catch (error) {
@@ -614,12 +662,18 @@ async function getSuggestions(env: Env, prefix: string, limit = 5): Promise<stri
 /**
  * Gets trending search queries from D1
  * Returns top queries from the last 7 days
+ * If country is specified, returns country-specific trending queries with fallback to global
  *
  * @param env - Environment bindings
  * @param limit - Number of trending queries to return (default: 10)
+ * @param country - ISO 3166-1 alpha-2 country code to filter by (optional)
  * @returns Array of trending queries with counts
  */
-async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]> {
+async function getTrendingQueries(
+  env: Env,
+  limit = 10,
+  country?: string
+): Promise<TrendingQuery[]> {
   if (!env.DB) return [];
 
   try {
@@ -628,16 +682,50 @@ async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]
     weekAgo.setDate(weekAgo.getDate() - 7);
     const weekAgoStr = weekAgo.toISOString().slice(0, 10);
 
-    const result = await env.DB.prepare(
-      `SELECT query_normalized, SUM(search_count) as total_count
-       FROM search_queries
-       WHERE date >= ?
-       GROUP BY query_hash
-       ORDER BY total_count DESC
-       LIMIT ?`
-    )
-      .bind(weekAgoStr, limit)
-      .all<TrendingQuery>();
+    // Normalize country to uppercase
+    const normalizedCountry = country?.toUpperCase();
+
+    let result: D1Result<TrendingQuery>;
+
+    if (normalizedCountry) {
+      // Try country-specific trending first
+      result = await env.DB.prepare(
+        `SELECT query_normalized, SUM(search_count) as total_count
+         FROM search_queries
+         WHERE date >= ? AND country = ?
+         GROUP BY query_hash
+         ORDER BY total_count DESC
+         LIMIT ?`
+      )
+        .bind(weekAgoStr, normalizedCountry, limit)
+        .all<TrendingQuery>();
+
+      // Fallback to global trending if no country-specific data
+      if (result.results.length === 0) {
+        result = await env.DB.prepare(
+          `SELECT query_normalized, SUM(search_count) as total_count
+           FROM search_queries
+           WHERE date >= ?
+           GROUP BY query_hash
+           ORDER BY total_count DESC
+           LIMIT ?`
+        )
+          .bind(weekAgoStr, limit)
+          .all<TrendingQuery>();
+      }
+    } else {
+      // Global trending (no country filter)
+      result = await env.DB.prepare(
+        `SELECT query_normalized, SUM(search_count) as total_count
+         FROM search_queries
+         WHERE date >= ?
+         GROUP BY query_hash
+         ORDER BY total_count DESC
+         LIMIT ?`
+      )
+        .bind(weekAgoStr, limit)
+        .all<TrendingQuery>();
+    }
 
     return result.results;
   } catch (error) {
@@ -646,6 +734,161 @@ async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]
     });
     return [];
   }
+}
+
+/**
+ * Semantic search result item
+ */
+interface SemanticSearchResult {
+  id: string;
+  score: number;
+  title?: string;
+  description?: string;
+  artworkUrl?: string;
+  feedUrl?: string;
+}
+
+/**
+ * Semantic search response
+ */
+interface SemanticSearchResponse {
+  query: string;
+  results: SemanticSearchResult[];
+  resultCount: number;
+}
+
+/**
+ * Safely extracts a string value from metadata
+ * Returns undefined if the value is not a string or is undefined
+ */
+function getMetadataString(
+  metadata: Record<string, string | number | boolean> | undefined,
+  key: string
+): string | undefined {
+  if (!metadata || !(key in metadata)) {
+    return undefined;
+  }
+  const value = metadata[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Generates text embeddings using Workers AI
+ * Note: Workers AI embedding models require array input format even for single texts
+ *
+ * @param env - Environment bindings with AI
+ * @param text - Text to generate embedding for
+ * @returns Embedding vector or null if unavailable
+ */
+async function generateEmbedding(env: Env, text: string): Promise<number[] | null> {
+  if (!env.AI) {
+    log('warn', 'AI binding not available for embedding generation');
+    return null;
+  }
+
+  try {
+    // Workers AI embedding models require array format for text input
+    const result = await env.AI.run(SEMANTIC_SEARCH_MODEL, { text: [text] });
+
+    // Handle response format from Workers AI
+    if ('data' in result && Array.isArray(result.data) && result.data.length > 0) {
+      return result.data[0];
+    }
+
+    log('warn', 'Unexpected embedding response format', { result: JSON.stringify(result) });
+    return null;
+  } catch (error) {
+    log('error', 'Failed to generate embedding', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return null;
+  }
+}
+
+/**
+ * Performs semantic search using vector similarity
+ *
+ * @param query - Search query text
+ * @param limit - Maximum number of results to return
+ * @param env - Environment bindings
+ * @returns Semantic search results with scores
+ */
+async function semanticSearchRequest(
+  query: string,
+  limit: number,
+  env: Env
+): Promise<SemanticSearchResponse> {
+  // Generate embedding for the query
+  const embedding = await generateEmbedding(env, query);
+
+  if (!embedding) {
+    return {
+      query,
+      results: [],
+      resultCount: 0,
+    };
+  }
+
+  // Check if Vectorize is available
+  if (!env.VECTORIZE) {
+    log('warn', 'Vectorize binding not available for semantic search');
+    return {
+      query,
+      results: [],
+      resultCount: 0,
+    };
+  }
+
+  try {
+    // Query the vector index for similar podcasts
+    const topK = Math.min(limit, SEMANTIC_SEARCH_TOP_K);
+    const vectorResults = await env.VECTORIZE.query(embedding, {
+      topK,
+      returnMetadata: 'all',
+    });
+
+    const results: SemanticSearchResult[] = vectorResults.matches.map((match) => ({
+      id: match.id,
+      score: match.score,
+      title: getMetadataString(match.metadata, 'title'),
+      description: getMetadataString(match.metadata, 'description'),
+      artworkUrl: getMetadataString(match.metadata, 'artworkUrl'),
+      feedUrl: getMetadataString(match.metadata, 'feedUrl'),
+    }));
+
+    return {
+      query,
+      results,
+      resultCount: results.length,
+    };
+  } catch (error) {
+    log('error', 'Semantic search failed', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      query,
+    });
+    return {
+      query,
+      results: [],
+      resultCount: 0,
+    };
+  }
+}
+
+/**
+ * Validates the limit parameter for semantic search
+ * Different from validateLimit as semantic search has a different maximum
+ *
+ * @param limit - The limit string to validate
+ * @returns Validated limit number
+ */
+function validateSemanticSearchLimit(limit: string | undefined): number {
+  if (!limit) return SEMANTIC_SEARCH_TOP_K;
+
+  const parsed = parseInt(limit, 10);
+  if (isNaN(parsed) || parsed < 1) {
+    return SEMANTIC_SEARCH_TOP_K;
+  }
+  return Math.min(parsed, SEMANTIC_SEARCH_TOP_K);
 }
 
 /**
@@ -1734,7 +1977,7 @@ function getApiSchema(): OpenAPIV3.Document {
         get: {
           summary: 'Trending Queries',
           description:
-            'Returns trending podcast search queries from the last 7 days. Feature-flagged endpoint - returns 404 when disabled.',
+            'Returns trending podcast search queries from the last 7 days. Feature-flagged endpoint - returns 404 when disabled. Supports geographic filtering with fallback to global trending.',
           operationId: 'trendingQueries',
           parameters: [
             {
@@ -1747,6 +1990,18 @@ function getApiSchema(): OpenAPIV3.Document {
                 default: 10,
                 minimum: 1,
                 maximum: 50,
+              },
+            },
+            {
+              name: 'country',
+              in: 'query',
+              description:
+                'ISO 3166-1 alpha-2 country code to filter trending queries (e.g., US, GB, JP). Falls back to global trending if no country-specific data available.',
+              required: false,
+              schema: {
+                type: 'string',
+                pattern: '^[A-Za-z]{2}$',
+                example: 'US',
               },
             },
           ],
@@ -1775,6 +2030,12 @@ function getApiSchema(): OpenAPIV3.Document {
                         type: 'string',
                         description: 'Time period for trending data',
                         example: '7d',
+                      },
+                      country: {
+                        type: 'string',
+                        description:
+                          'Requested country code for the trending data (or "global" if no valid country was provided). Data may fall back to global results when no country-specific data exists.',
+                        example: 'US',
                       },
                       generatedAt: {
                         type: 'string',
@@ -1857,6 +2118,119 @@ function getApiSchema(): OpenAPIV3.Document {
                   },
                 },
               },
+            },
+            '404': {
+              description: 'Feature not enabled',
+            },
+          },
+        },
+      },
+      '/semantic-search': {
+        get: {
+          summary: 'Semantic Search',
+          description:
+            'Performs semantic search using AI embeddings to find podcasts similar to the query meaning, even without exact keyword matches. Feature-flagged endpoint - returns 404 when disabled.',
+          operationId: 'semanticSearch',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              description: 'Search query for semantic similarity matching',
+              required: true,
+              schema: {
+                type: 'string',
+                maxLength: MAX_QUERY_LENGTH,
+                example: 'learn about artificial intelligence',
+              },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              description: 'Number of results to return',
+              required: false,
+              schema: {
+                type: 'integer',
+                default: 10,
+                minimum: 1,
+                maximum: 10,
+              },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Semantic search results',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      query: {
+                        type: 'string',
+                        description: 'The original search query',
+                        example: 'learn about artificial intelligence',
+                      },
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: {
+                              type: 'string',
+                              description: 'Unique podcast identifier',
+                            },
+                            score: {
+                              type: 'number',
+                              description: 'Similarity score (0-1, higher is more similar)',
+                              example: 0.89,
+                            },
+                            title: {
+                              type: 'string',
+                              description: 'Podcast title',
+                            },
+                            description: {
+                              type: 'string',
+                              description: 'Podcast description',
+                            },
+                            artworkUrl: {
+                              type: 'string',
+                              description: 'Podcast artwork URL',
+                            },
+                            feedUrl: {
+                              type: 'string',
+                              description: 'Podcast RSS feed URL',
+                            },
+                          },
+                        },
+                        description: 'List of semantically similar podcasts',
+                      },
+                      resultCount: {
+                        type: 'integer',
+                        description: 'Number of results returned',
+                        example: 10,
+                      },
+                    },
+                  },
+                },
+              },
+              headers: {
+                'Cache-Control': {
+                  description: 'Cache duration: 1 hour',
+                  schema: {
+                    type: 'string',
+                    example: 'public, max-age=3600',
+                  },
+                },
+                'X-Cache': {
+                  description: 'Cache hit indicator',
+                  schema: {
+                    type: 'string',
+                    enum: ['HIT', 'MISS'],
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Bad request - missing or invalid query parameter',
             },
             '404': {
               description: 'Feature not enabled',
@@ -2147,12 +2521,19 @@ export default {
 
         const limitParam = searchParams.get('limit');
         const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 10, 1), 50) : 10;
-        const trending = await getTrendingQueries(env, limit);
+        const countryParam = searchParams.get('country');
+        // Validate country code format (2 uppercase letters)
+        const country =
+          countryParam && /^[A-Za-z]{2}$/.test(countryParam)
+            ? countryParam.toUpperCase()
+            : undefined;
+        const trending = await getTrendingQueries(env, limit, country);
 
         const duration = Date.now() - startTime;
         log('info', 'Trending queries request', {
           requestId,
           limit,
+          country,
           resultCount: trending.length,
           duration,
         });
@@ -2165,6 +2546,7 @@ export default {
               count: t.total_count,
             })),
             period: '7d',
+            country: country ?? 'global',
             generatedAt: new Date().toISOString(),
           }),
           {
@@ -2228,6 +2610,70 @@ export default {
             },
           }
         );
+      }
+
+      // Semantic search endpoint (feature flagged)
+      if (pathname === '/semantic-search') {
+        const semanticSearchEnabled = await getFlag(env, 'semanticSearch');
+        if (!semanticSearchEnabled) {
+          return createErrorResponse('Not Found', 404, 'Not Found');
+        }
+
+        const query = searchParams.get('q');
+        if (!query) {
+          return createErrorResponse('Missing required query parameter: q', 400, 'Bad Request');
+        }
+
+        // Validate query
+        const queryError = validateQuery(query);
+        if (queryError) {
+          log('warn', 'Query validation failed', { requestId, query, error: queryError });
+          return createErrorResponse(queryError, 400, 'Bad Request');
+        }
+
+        const limit = validateSemanticSearchLimit(searchParams.get('limit') ?? undefined);
+
+        const searchResult = await semanticSearchRequest(query, limit, env);
+
+        const duration = Date.now() - startTime;
+        log('info', 'Semantic search request', {
+          requestId,
+          query,
+          limit,
+          resultCount: searchResult.resultCount,
+          duration,
+        });
+        trackMetrics(env, 'semanticSearch', false, 200, duration, colo, searchResult.resultCount);
+
+        // Export to R2 data lake (non-blocking)
+        if (env.ANALYTICS_LAKE) {
+          const analyticsEvent = createAnalyticsEvent(
+            requestId,
+            'semanticSearch',
+            false,
+            200,
+            duration,
+            colo,
+            {
+              query,
+              limit,
+              resultCount: searchResult.resultCount,
+              country: (request.cf?.country as string) ?? undefined,
+            }
+          );
+          ctx.waitUntil(exportAnalyticsEvent(env, analyticsEvent));
+        }
+
+        return new Response(JSON.stringify(searchResult), {
+          headers: {
+            'content-type': 'application/json;charset=UTF-8',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Cache-Control': `public, max-age=${CACHE_TTL_SEMANTIC_SEARCH}`,
+            'X-Cache': 'MISS',
+            ...SECURITY_HEADERS,
+          },
+        });
       }
 
       // Related podcasts endpoint
@@ -2449,7 +2895,8 @@ export default {
 
       // Track search query for trending (non-blocking)
       if (query && resultCount > 0) {
-        ctx.waitUntil(trackSearchQuery(env, query));
+        const requestCountry = (request.cf?.country as string) ?? undefined;
+        ctx.waitUntil(trackSearchQuery(env, query, requestCountry));
       }
 
       // Export to R2 data lake (non-blocking, feature-flagged)

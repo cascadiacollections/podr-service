@@ -1154,6 +1154,113 @@ describe('Podr Service Worker', () => {
 
       expect(response.headers.get('Cache-Control')).toBe('public, max-age=300');
     });
+
+    test('should filter trending queries by country parameter', async () => {
+      const url = 'http://localhost:8787/trending?country=US';
+      const request = new Request(url, { method: 'GET' });
+
+      // Create a mock D1 that returns country-specific data
+      const mockEnvWithCountryD1 = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:trendingQueries') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        DB: createMockD1([
+          { query_normalized: 'us podcasts', total_count: 100 },
+          { query_normalized: 'american shows', total_count: 80 },
+        ]),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithCountryD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.country).toBe('US');
+      expect(body.trending).toHaveLength(2);
+    });
+
+    test('should return global trending and country="global" when no country specified', async () => {
+      const url = 'http://localhost:8787/trending';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.country).toBe('global');
+    });
+
+    test('should validate country code format (2 letters only)', async () => {
+      const url = 'http://localhost:8787/trending?country=USA';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // Invalid country code should be ignored, returning global
+      expect(body.country).toBe('global');
+    });
+
+    test('should normalize country code to uppercase', async () => {
+      const url = 'http://localhost:8787/trending?country=us';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvWithD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.country).toBe('US');
+    });
+
+    test('should fallback to global when no country-specific data exists', async () => {
+      const url = 'http://localhost:8787/trending?country=ZW';
+      const request = new Request(url, { method: 'GET' });
+
+      // Mock D1 that returns empty for country query, then returns global data
+      let callCount = 0;
+      const mockEnvWithFallbackD1 = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:trendingQueries') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        DB: {
+          prepare: jest.fn((_query: string) => ({
+            bind: jest.fn().mockReturnThis(),
+            first: jest.fn(() => Promise.resolve(null)),
+            run: jest.fn(() => Promise.resolve({ success: true, meta: { rows_written: 1 } })),
+            all: jest.fn(() => {
+              callCount++;
+              // First call (country-specific) returns empty, second call (global) returns data
+              if (callCount === 1) {
+                return Promise.resolve({ results: [], success: true });
+              }
+              return Promise.resolve({
+                results: [
+                  { query_normalized: 'global podcast', total_count: 200 },
+                  { query_normalized: 'worldwide show', total_count: 150 },
+                ],
+                success: true,
+              });
+            }),
+          })),
+          exec: jest.fn(() => Promise.resolve({ results: [], success: true })),
+        },
+      };
+
+      const response = await worker.fetch(request, mockEnvWithFallbackD1, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      // Should still return the country in response but with global fallback data
+      expect(body.country).toBe('ZW');
+      expect(body.trending).toHaveLength(2);
+      expect(body.trending[0].query).toBe('global podcast');
+    });
   });
 
   describe('suggest (autocomplete) endpoint', () => {
@@ -1776,6 +1883,359 @@ describe('Podr Service Worker', () => {
       };
 
       const mockEnvWithR2 = {
+        ANALYTICS_LAKE: mockR2,
+      };
+
+      const mockCtxForR2 = {
+        waitUntil: jest.fn(),
+        passThroughOnException: jest.fn(),
+      } as unknown as ExecutionContext;
+
+      await worker.fetch(request, mockEnvWithR2, mockCtxForR2);
+
+      expect(mockCtxForR2.waitUntil).toHaveBeenCalled();
+    });
+  });
+
+  describe('semantic search endpoint', () => {
+    // Mock Workers AI binding
+    const createMockAI = (embeddings: number[][] = [[0.1, 0.2, 0.3]]) => ({
+      run: jest.fn(() => Promise.resolve({ data: embeddings })),
+    });
+
+    // Mock Vectorize binding
+    const createMockVectorize = (
+      matches: Array<{
+        id: string;
+        score: number;
+        metadata?: Record<string, string | number | boolean>;
+      }> = []
+    ) => ({
+      query: jest.fn(() => Promise.resolve({ matches })),
+      insert: jest.fn(() => Promise.resolve({ ids: [] })),
+      upsert: jest.fn(() => Promise.resolve({ ids: [] })),
+    });
+
+    // Mock environment with semantic search enabled
+    const createMockEnvSemanticSearch = (
+      matches: Array<{
+        id: string;
+        score: number;
+        metadata?: Record<string, string | number | boolean>;
+      }> = []
+    ) => ({
+      FLAGS: {
+        get: jest.fn((key: string) => {
+          if (key === 'flag:semanticSearch') return Promise.resolve('true');
+          return Promise.resolve(null);
+        }),
+      },
+      AI: createMockAI(),
+      VECTORIZE: createMockVectorize(matches),
+    });
+
+    test('should return 404 when semantic search feature flag is disabled', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=machine%20learning';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnvDisabled = {
+        FLAGS: {
+          get: jest.fn(() => Promise.resolve('false')),
+        },
+      };
+
+      const response = await worker.fetch(request, mockEnvDisabled, mockCtx);
+
+      expect(response.status).toBe(404);
+    });
+
+    test('should return 404 when semantic search feature flag is not set', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=machine%20learning';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+
+      expect(response.status).toBe(404);
+    });
+
+    test('should return 400 when query parameter is missing', async () => {
+      const url = 'http://localhost:8787/semantic-search';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnv = createMockEnvSemanticSearch();
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(400);
+      const text = await response.text();
+      expect(text).toContain('Missing required query parameter');
+    });
+
+    test('should return 400 for query exceeding max length', async () => {
+      const longQuery = 'a'.repeat(201);
+      const url = `http://localhost:8787/semantic-search?q=${longQuery}`;
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnv = createMockEnvSemanticSearch();
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(400);
+      const text = await response.text();
+      expect(text).toContain('maximum length');
+    });
+
+    test('should return 400 for suspicious query patterns', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=<script>alert(1)</script>';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnv = createMockEnvSemanticSearch();
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(400);
+      const text = await response.text();
+      expect(text).toContain('invalid characters');
+    });
+
+    test('should return semantic search results when enabled', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=machine%20learning';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockMatches = [
+        {
+          id: 'podcast-1',
+          score: 0.95,
+          metadata: {
+            title: 'AI & Machine Learning Podcast',
+            description: 'A podcast about AI',
+            artworkUrl: 'https://example.com/art1.jpg',
+            feedUrl: 'https://example.com/feed1.xml',
+          },
+        },
+        {
+          id: 'podcast-2',
+          score: 0.85,
+          metadata: {
+            title: 'Data Science Weekly',
+            description: 'Data science discussions',
+          },
+        },
+      ];
+
+      const mockEnv = createMockEnvSemanticSearch(mockMatches);
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toBe('application/json;charset=UTF-8');
+      expect(response.headers.get('Cache-Control')).toContain('max-age=3600');
+      expect(response.headers.get('X-Cache')).toBe('MISS');
+
+      const body = await response.json();
+      expect(body).toHaveProperty('query', 'machine learning');
+      expect(body).toHaveProperty('results');
+      expect(body).toHaveProperty('resultCount', 2);
+      expect(body.results).toHaveLength(2);
+      expect(body.results[0]).toHaveProperty('id', 'podcast-1');
+      expect(body.results[0]).toHaveProperty('score', 0.95);
+      expect(body.results[0]).toHaveProperty('title', 'AI & Machine Learning Podcast');
+    });
+
+    test('should include security headers in response', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnv = createMockEnvSemanticSearch([]);
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.headers.get('X-Content-Type-Options')).toBe('nosniff');
+      expect(response.headers.get('X-Frame-Options')).toBe('DENY');
+      expect(response.headers.get('Referrer-Policy')).toBe('strict-origin-when-cross-origin');
+    });
+
+    test('should include CORS headers in response', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnv = createMockEnvSemanticSearch([]);
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*');
+      expect(response.headers.get('Access-Control-Allow-Methods')).toBe('GET');
+    });
+
+    test('should return empty results when AI binding is not available', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnvNoAI = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:semanticSearch') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        VECTORIZE: createMockVectorize([]),
+      };
+
+      const response = await worker.fetch(request, mockEnvNoAI, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.resultCount).toBe(0);
+      expect(body.results).toEqual([]);
+    });
+
+    test('should return empty results when Vectorize binding is not available', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnvNoVectorize = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:semanticSearch') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        AI: createMockAI(),
+      };
+
+      const response = await worker.fetch(request, mockEnvNoVectorize, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.resultCount).toBe(0);
+      expect(body.results).toEqual([]);
+    });
+
+    test('should respect limit parameter', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology&limit=5';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnv = createMockEnvSemanticSearch([
+        { id: 'podcast-1', score: 0.9 },
+        { id: 'podcast-2', score: 0.8 },
+        { id: 'podcast-3', score: 0.7 },
+      ]);
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(200);
+      expect(mockEnv.VECTORIZE.query).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({ topK: 5 })
+      );
+    });
+
+    test('should clamp limit to maximum allowed value', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology&limit=100';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnv = createMockEnvSemanticSearch([]);
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(200);
+      // Max is 10 (SEMANTIC_SEARCH_TOP_K)
+      expect(mockEnv.VECTORIZE.query).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({ topK: 10 })
+      );
+    });
+
+    test('should include /semantic-search in schema', async () => {
+      const url = 'http://localhost:8787/';
+      const request = new Request(url, { method: 'GET' });
+
+      const response = await worker.fetch(request, mockEnvNoRateLimiter, mockCtx);
+      const schema = await response.json();
+
+      expect(schema.paths).toHaveProperty('/semantic-search');
+      expect(schema.paths['/semantic-search']).toHaveProperty('get');
+      expect(schema.paths['/semantic-search'].get).toHaveProperty('operationId', 'semanticSearch');
+      expect(schema.paths['/semantic-search'].get).toHaveProperty('parameters');
+      expect(schema.paths['/semantic-search'].get.responses).toHaveProperty('200');
+      expect(schema.paths['/semantic-search'].get.responses).toHaveProperty('400');
+      expect(schema.paths['/semantic-search'].get.responses).toHaveProperty('404');
+    });
+
+    test('should handle AI errors gracefully', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnvWithAIError = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:semanticSearch') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        AI: {
+          run: jest.fn(() => Promise.reject(new Error('AI service unavailable'))),
+        },
+        VECTORIZE: createMockVectorize([]),
+      };
+
+      const response = await worker.fetch(request, mockEnvWithAIError, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.resultCount).toBe(0);
+      expect(body.results).toEqual([]);
+    });
+
+    test('should handle Vectorize errors gracefully', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockEnvWithVectorizeError = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:semanticSearch') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        AI: createMockAI(),
+        VECTORIZE: {
+          query: jest.fn(() => Promise.reject(new Error('Vectorize service unavailable'))),
+          insert: jest.fn(() => Promise.resolve({ ids: [] })),
+          upsert: jest.fn(() => Promise.resolve({ ids: [] })),
+        },
+      };
+
+      const response = await worker.fetch(request, mockEnvWithVectorizeError, mockCtx);
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.resultCount).toBe(0);
+      expect(body.results).toEqual([]);
+    });
+
+    test('should export semantic search events to R2 when configured', async () => {
+      const url = 'http://localhost:8787/semantic-search?q=technology';
+      const request = new Request(url, { method: 'GET' });
+
+      const mockR2 = {
+        put: jest.fn(() =>
+          Promise.resolve({ key: 'test', size: 100, etag: 'abc', uploaded: new Date() })
+        ),
+        get: jest.fn(() => Promise.resolve(null)),
+        list: jest.fn(() => Promise.resolve({ objects: [], truncated: false })),
+        head: jest.fn(() => Promise.resolve(null)),
+      };
+
+      const mockEnvWithR2 = {
+        FLAGS: {
+          get: jest.fn((key: string) => {
+            if (key === 'flag:semanticSearch') return Promise.resolve('true');
+            return Promise.resolve(null);
+          }),
+        },
+        AI: createMockAI(),
+        VECTORIZE: createMockVectorize([{ id: 'podcast-1', score: 0.9 }]),
         ANALYTICS_LAKE: mockR2,
       };
 
