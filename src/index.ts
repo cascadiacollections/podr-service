@@ -176,10 +176,17 @@ const MAX_LIMIT = 200 as const;
 const CACHE_TTL_SEARCH = 86400 as const; // 24 hours for search results
 const CACHE_TTL_TOP = 7200 as const; // 2 hours for top podcasts (RSS updates slowly)
 const CACHE_TTL_PODCAST_DETAIL = 14400 as const; // 4 hours for podcast details (metadata rarely changes)
-const CACHE_TTL_RELATED = 14400 as const; // 4 hours for related podcasts (similar to detail)
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
 const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
 const CACHE_TTL_SEMANTIC_SEARCH = 3600 as const; // 1 hour for semantic search results
+const CACHE_TTL_RELATED = 14400 as const; // 4 hours for related podcasts (similar to detail)
+
+/**
+ * Related podcasts limit configuration
+ */
+const MIN_RELATED_LIMIT = 1 as const;
+const MAX_RELATED_LIMIT = 20 as const;
+const DEFAULT_RELATED_LIMIT = 10 as const;
 
 /**
  * Semantic search configuration
@@ -191,13 +198,6 @@ const SEMANTIC_SEARCH_TOP_K = 10 as const; // Number of similar results to retur
  * Episode limit for podcast detail response
  */
 const PODCAST_EPISODE_LIMIT = 20 as const;
-
-/**
- * Related podcasts limit configuration
- */
-const MIN_RELATED_LIMIT = 1 as const;
-const MAX_RELATED_LIMIT = 20 as const;
-const DEFAULT_RELATED_LIMIT = 10 as const;
 
 /**
  * Circuit Breaker Configuration
