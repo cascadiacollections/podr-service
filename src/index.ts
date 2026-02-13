@@ -1603,7 +1603,7 @@ function handleHealthCheck(request: Request): Response {
 async function handleDeepHealthCheck(request: Request, env: Env): Promise<Response> {
   const startTime = Date.now();
   let upstreamOk = false;
-  let upstreamLatency = 0;
+  let upstreamLatency: number;
 
   try {
     const testUrl = `${HOSTNAME}/search?media=podcast&term=test&limit=1`;
