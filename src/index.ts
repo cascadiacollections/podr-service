@@ -605,8 +605,9 @@ interface SemanticSearchResponse {
 }
 
 /**
- * Safely extracts a string value from metadata
- * Returns undefined if the value is not a string or is undefined
+ * Safely extracts a string value from Vectorize metadata.
+ * VectorizeVectorMetadata type is provided by worker-configuration.d.ts (via `wrangler types`).
+ * Returns undefined if the value is not a string or is undefined.
  */
 function getMetadataString(
   metadata: Record<string, VectorizeVectorMetadata> | undefined,

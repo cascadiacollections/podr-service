@@ -1,6 +1,9 @@
 import { describe, test, expect, jest, beforeEach } from '@jest/globals';
 import worker from '../src/index';
 
+/** Helper type for assigning to global.caches in tests */
+type GlobalWithCaches = typeof globalThis & { caches: CacheStorage };
+
 // Mock execution context
 const mockCtx = {
   waitUntil: jest.fn(),
@@ -75,7 +78,7 @@ describe('Podr Service Worker', () => {
       put: jest.fn(() => Promise.resolve()),
     };
 
-    (global as unknown as { caches: CacheStorage }).caches = {
+    (global as unknown as GlobalWithCaches).caches = {
       default: mockCache,
     } as unknown as CacheStorage;
 
@@ -284,7 +287,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      (global as unknown as { caches: CacheStorage }).caches = {
+      (global as unknown as GlobalWithCaches).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
@@ -593,7 +596,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      (global as unknown as { caches: CacheStorage }).caches = {
+      (global as unknown as GlobalWithCaches).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
@@ -1598,7 +1601,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      (global as unknown as { caches: CacheStorage }).caches = {
+      (global as unknown as GlobalWithCaches).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
     });
@@ -1754,7 +1757,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      (global as unknown as { caches: CacheStorage }).caches = {
+      (global as unknown as GlobalWithCaches).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
