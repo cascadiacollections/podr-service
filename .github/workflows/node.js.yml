@@ -50,6 +50,7 @@ jobs:
           jest.config.js
           eslint.config.js
           .prettierrc
+          .prettierignore
           .yarn
           .yarnrc.yml
         sparse-checkout-cone-mode: false
