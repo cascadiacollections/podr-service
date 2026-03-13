@@ -46,6 +46,7 @@ jobs:
           package.json
           yarn.lock
           tsconfig.json
+          worker-configuration.d.ts
           jest.config.js
           eslint.config.js
           .prettierrc

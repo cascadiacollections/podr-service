@@ -75,7 +75,7 @@ describe('Podr Service Worker', () => {
       put: jest.fn(() => Promise.resolve()),
     };
 
-    global.caches = {
+    (global as unknown as { caches: CacheStorage }).caches = {
       default: mockCache,
     } as unknown as CacheStorage;
 
@@ -284,7 +284,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      global.caches = {
+      (global as unknown as { caches: CacheStorage }).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
@@ -593,7 +593,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      global.caches = {
+      (global as unknown as { caches: CacheStorage }).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
@@ -1598,7 +1598,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      global.caches = {
+      (global as unknown as { caches: CacheStorage }).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
     });
@@ -1754,7 +1754,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      global.caches = {
+      (global as unknown as { caches: CacheStorage }).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
@@ -1908,7 +1908,7 @@ describe('Podr Service Worker', () => {
       matches: Array<{
         id: string;
         score: number;
-        metadata?: Record<string, string | number | boolean>;
+        metadata?: Record<string, string | number | boolean | string[]>;
       }> = []
     ) => ({
       query: jest.fn(() => Promise.resolve({ matches })),
@@ -1921,7 +1921,7 @@ describe('Podr Service Worker', () => {
       matches: Array<{
         id: string;
         score: number;
-        metadata?: Record<string, string | number | boolean>;
+        metadata?: Record<string, string | number | boolean | string[]>;
       }> = []
     ) => ({
       FLAGS: {
