@@ -3,7 +3,7 @@
     "outDir": "./dist",
     "module": "NodeNext",
     "target": "ES2024",
-    "lib": ["ES2024", "DOM"],
+    "lib": ["ES2024"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitReturns": true,
@@ -12,8 +12,8 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "skipLibCheck": true,
-    "types": ["@cloudflare/workers-types", "jest", "node"]
+    "types": ["jest", "node"]
   },
-  "include": ["src", "__tests__"],
+  "include": ["src", "__tests__", "worker-configuration.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

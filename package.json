@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "wrangler deploy --dry-run --outdir=dist",
+    "types": "wrangler types",
     "lint": "eslint ./src ./__tests__",
     "lint:fix": "eslint ./src ./__tests__ --fix",
     "format": "prettier --write \"**/*.{js,ts,json,md}\"",
@@ -18,7 +19,7 @@
   "author": "Kevin T. Coughlin",
   "license": "MIT",
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20260307.1",
+    "@cloudflare/workers-types": "4.20260313.1",
     "@eslint/js": "^9.39.2",
     "@types/jest": "30.0.0",
     "@typescript-eslint/eslint-plugin": "8.57.0",
@@ -35,7 +36,7 @@
   },
   "dependencies": {
     "@cloudflare/containers": "^0.1.1",
-    "wrangler": "^4.71.0"
+    "wrangler": "^4.73.0"
   },
   "packageManager": "yarn@4.10.3",
   "resolutions": {

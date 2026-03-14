@@ -1,6 +1,9 @@
 import { describe, test, expect, jest, beforeEach } from '@jest/globals';
 import worker from '../src/index';
 
+/** Helper type for assigning to global.caches in tests */
+type GlobalWithCaches = typeof globalThis & { caches: CacheStorage };
+
 // Mock execution context
 const mockCtx = {
   waitUntil: jest.fn(),
@@ -75,7 +78,7 @@ describe('Podr Service Worker', () => {
       put: jest.fn(() => Promise.resolve()),
     };
 
-    global.caches = {
+    (global as unknown as GlobalWithCaches).caches = {
       default: mockCache,
     } as unknown as CacheStorage;
 
@@ -284,7 +287,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      global.caches = {
+      (global as unknown as GlobalWithCaches).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
@@ -593,7 +596,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      global.caches = {
+      (global as unknown as GlobalWithCaches).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
@@ -1598,7 +1601,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      global.caches = {
+      (global as unknown as GlobalWithCaches).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
     });
@@ -1754,7 +1757,7 @@ describe('Podr Service Worker', () => {
         put: jest.fn(() => Promise.resolve()),
       };
 
-      global.caches = {
+      (global as unknown as GlobalWithCaches).caches = {
         default: mockCache,
       } as unknown as CacheStorage;
 
@@ -1908,7 +1911,7 @@ describe('Podr Service Worker', () => {
       matches: Array<{
         id: string;
         score: number;
-        metadata?: Record<string, string | number | boolean>;
+        metadata?: Record<string, string | number | boolean | string[]>;
       }> = []
     ) => ({
       query: jest.fn(() => Promise.resolve({ matches })),
@@ -1921,7 +1924,7 @@ describe('Podr Service Worker', () => {
       matches: Array<{
         id: string;
         score: number;
-        metadata?: Record<string, string | number | boolean>;
+        metadata?: Record<string, string | number | boolean | string[]>;
       }> = []
     ) => ({
       FLAGS: {

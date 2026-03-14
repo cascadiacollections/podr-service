@@ -2,22 +2,6 @@ import type { OpenAPIV3 } from 'openapi-types';
 import { Container } from '@cloudflare/containers';
 
 /**
- * Durable Object namespace binding for containers
- */
-interface DurableObjectNamespace {
-  idFromName: (name: string) => DurableObjectId;
-  get: (id: DurableObjectId) => DurableObjectStub;
-}
-
-interface DurableObjectId {
-  toString: () => string;
-}
-
-interface DurableObjectStub {
-  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
-}
-
-/**
  * Function type for API calls that return a Promise of unknown data
  */
 type ApiCall = () => Promise<unknown>;
@@ -55,96 +39,6 @@ interface LogContext {
   status?: number;
   error?: string;
   [key: string]: unknown;
-}
-
-/**
- * Analytics Engine data point
- */
-interface AnalyticsDataPoint {
-  blobs?: string[];
-  doubles?: number[];
-  indexes?: string[];
-}
-
-/**
- * Analytics Engine binding
- */
-interface AnalyticsEngine {
-  writeDataPoint: (data: AnalyticsDataPoint) => void;
-}
-
-/**
- * KV namespace binding
- */
-interface KVNamespace {
-  get: (key: string, options?: { type?: 'text' | 'json' }) => Promise<string | null>;
-  put: (key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>;
-}
-
-/**
- * D1 database result types
- */
-interface D1Result<T> {
-  results: T[];
-  success: boolean;
-  meta?: {
-    duration?: number;
-    rows_read?: number;
-    rows_written?: number;
-  };
-}
-
-/**
- * D1 prepared statement
- */
-interface D1PreparedStatement {
-  bind: (...values: unknown[]) => D1PreparedStatement;
-  first: <T = unknown>() => Promise<T | null>;
-  run: () => Promise<D1Result<unknown>>;
-  all: <T = unknown>() => Promise<D1Result<T>>;
-}
-
-/**
- * D1 database binding
- */
-interface D1Database {
-  prepare: (query: string) => D1PreparedStatement;
-  exec: (query: string) => Promise<D1Result<unknown>>;
-}
-
-/**
- * R2 bucket binding for analytics data lake
- */
-interface R2Bucket {
-  put: (
-    key: string,
-    value: string | ArrayBuffer | ReadableStream,
-    options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }
-  ) => Promise<R2Object | null>;
-  get: (key: string) => Promise<R2ObjectBody | null>;
-  list: (options?: { prefix?: string; limit?: number; cursor?: string }) => Promise<R2Objects>;
-  head: (key: string) => Promise<R2Object | null>;
-}
-
-interface R2Object {
-  key: string;
-  size: number;
-  etag: string;
-  uploaded: Date;
-  httpMetadata?: { contentType?: string };
-  customMetadata?: Record<string, string>;
-}
-
-interface R2ObjectBody extends R2Object {
-  body: ReadableStream;
-  text: () => Promise<string>;
-  json: <T>() => Promise<T>;
-}
-
-interface R2Objects {
-  objects: R2Object[];
-  truncated: boolean;
-  cursor?: string;
 }
 
 /**
@@ -191,56 +85,17 @@ const DEFAULT_FLAGS: FeatureFlags = {
 };
 
 /**
- * Workers AI binding for text embeddings
+ * Augment the generated Env with secrets (set via `wrangler secret put`)
+ * and bindings that are commented out in wrangler.jsonc.
+ * Generated bindings come from worker-configuration.d.ts via `wrangler types`.
  */
-interface WorkersAI {
-  run: (
-    model: string,
-    inputs: { text: string | string[] }
-  ) => Promise<{ data: number[][] } | { shape: number[]; data: number[][] }>;
-}
-
-/**
- * Vectorize index binding for semantic search
- */
-interface VectorizeIndex {
-  query: (
-    vector: number[],
-    options: { topK: number; returnValues?: boolean; returnMetadata?: 'all' | 'indexed' | 'none' }
-  ) => Promise<{ matches: VectorizeMatch[] }>;
-  insert: (vectors: VectorizeVector[]) => Promise<{ ids: string[] }>;
-  upsert: (vectors: VectorizeVector[]) => Promise<{ ids: string[] }>;
-}
-
-interface VectorizeVector {
-  id: string;
-  values: number[];
-  metadata?: Record<string, string | number | boolean>;
-}
-
-interface VectorizeMatch {
-  id: string;
-  score: number;
-  values?: number[];
-  metadata?: Record<string, string | number | boolean>;
-}
-
-/**
- * Environment bindings for the Worker
- */
-interface Env {
-  RATE_LIMITER?: {
-    limit: (options: { key: string }) => Promise<{ success: boolean }>;
-  };
-  ANALYTICS?: AnalyticsEngine;
-  FLAGS?: KVNamespace;
-  DB?: D1Database;
-  ANALYTICS_LAKE?: R2Bucket;
-  ITUNES_PROXY?: DurableObjectNamespace;
-  PODCAST_INDEX_KEY?: string;
-  PODCAST_INDEX_SECRET?: string;
-  AI?: WorkersAI;
-  VECTORIZE?: VectorizeIndex;
+declare global {
+  interface Env {
+    DB?: D1Database;
+    PODCAST_INDEX_KEY?: string;
+    PODCAST_INDEX_SECRET?: string;
+    VECTORIZE?: Vectorize;
+  }
 }
 
 /**
@@ -750,11 +605,12 @@ interface SemanticSearchResponse {
 }
 
 /**
- * Safely extracts a string value from metadata
- * Returns undefined if the value is not a string or is undefined
+ * Safely extracts a string value from Vectorize metadata.
+ * VectorizeVectorMetadata type is provided by worker-configuration.d.ts (via `wrangler types`).
+ * Returns undefined if the value is not a string or is undefined.
  */
 function getMetadataString(
-  metadata: Record<string, string | number | boolean> | undefined,
+  metadata: Record<string, VectorizeVectorMetadata> | undefined,
   key: string
 ): string | undefined {
   if (!metadata || !(key in metadata)) {
@@ -784,7 +640,7 @@ async function generateEmbedding(env: Env, text: string): Promise<number[] | nul
 
     // Handle response format from Workers AI
     if ('data' in result && Array.isArray(result.data) && result.data.length > 0) {
-      return result.data[0];
+      return result.data[0] ?? null;
     }
 
     log('warn', 'Unexpected embedding response format', { result: JSON.stringify(result) });
@@ -1771,11 +1627,7 @@ function getApiSchema(): OpenAPIV3.Document {
                     'Cache duration: indefinitely (immutable) for schema, 1 hour for search, 30 minutes for top podcasts',
                   schema: {
                     type: 'string',
-                    examples: [
-                      'public, max-age=31536000, immutable',
-                      'public, max-age=3600',
-                      'public, max-age=1800',
-                    ],
+                    example: 'public, max-age=31536000, immutable',
                   },
                 },
                 'X-Cache': {
@@ -2463,7 +2315,7 @@ export default {
 
       // Podcast detail endpoint: /podcast/:id
       const podcastMatch = pathname.match(/^\/podcast\/(\d+)$/);
-      if (podcastMatch) {
+      if (podcastMatch?.[1]) {
         const podcastId = parseInt(podcastMatch[1], 10);
 
         // Validate podcast ID
