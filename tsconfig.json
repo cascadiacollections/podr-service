@@ -2,16 +2,18 @@
   "compilerOptions": {
     "outDir": "./dist",
     "module": "NodeNext",
-    "target": "esnext",
-    "lib": ["esnext", "dom"],
-    "alwaysStrict": true,
+    "target": "ES2024",
+    "lib": ["ES2024"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "moduleResolution": "nodenext",
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "moduleResolution": "NodeNext",
     "esModuleInterop": true,
     "isolatedModules": true,
-    "types": ["@cloudflare/workers-types", "jest", "node"]
+    "skipLibCheck": true,
+    "types": ["jest", "node"]
   },
-  "include": ["src", "__tests__"],
+  "include": ["src", "__tests__", "worker-configuration.d.ts"],
   "exclude": ["node_modules", "dist"]
 }

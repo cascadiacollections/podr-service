@@ -131,3 +131,6 @@ dist
 
 # Wrangler
 .wrangler/
+
+# Claude Code
+.claude/

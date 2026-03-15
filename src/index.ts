@@ -1,4 +1,5 @@
 import type { OpenAPIV3 } from 'openapi-types';
+import { Container } from '@cloudflare/containers';
 
 /**
  * Function type for API calls that return a Promise of unknown data
@@ -41,96 +42,6 @@ interface LogContext {
 }
 
 /**
- * Analytics Engine data point
- */
-interface AnalyticsDataPoint {
-  blobs?: string[];
-  doubles?: number[];
-  indexes?: string[];
-}
-
-/**
- * Analytics Engine binding
- */
-interface AnalyticsEngine {
-  writeDataPoint: (data: AnalyticsDataPoint) => void;
-}
-
-/**
- * KV namespace binding
- */
-interface KVNamespace {
-  get: (key: string, options?: { type?: 'text' | 'json' }) => Promise<string | null>;
-  put: (key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>;
-}
-
-/**
- * D1 database result types
- */
-interface D1Result<T> {
-  results: T[];
-  success: boolean;
-  meta?: {
-    duration?: number;
-    rows_read?: number;
-    rows_written?: number;
-  };
-}
-
-/**
- * D1 prepared statement
- */
-interface D1PreparedStatement {
-  bind: (...values: unknown[]) => D1PreparedStatement;
-  first: <T = unknown>() => Promise<T | null>;
-  run: () => Promise<D1Result<unknown>>;
-  all: <T = unknown>() => Promise<D1Result<T>>;
-}
-
-/**
- * D1 database binding
- */
-interface D1Database {
-  prepare: (query: string) => D1PreparedStatement;
-  exec: (query: string) => Promise<D1Result<unknown>>;
-}
-
-/**
- * R2 bucket binding for analytics data lake
- */
-interface R2Bucket {
-  put: (
-    key: string,
-    value: string | ArrayBuffer | ReadableStream,
-    options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }
-  ) => Promise<R2Object | null>;
-  get: (key: string) => Promise<R2ObjectBody | null>;
-  list: (options?: { prefix?: string; limit?: number; cursor?: string }) => Promise<R2Objects>;
-  head: (key: string) => Promise<R2Object | null>;
-}
-
-interface R2Object {
-  key: string;
-  size: number;
-  etag: string;
-  uploaded: Date;
-  httpMetadata?: { contentType?: string };
-  customMetadata?: Record<string, string>;
-}
-
-interface R2ObjectBody extends R2Object {
-  body: ReadableStream;
-  text: () => Promise<string>;
-  json: <T>() => Promise<T>;
-}
-
-interface R2Objects {
-  objects: R2Object[];
-  truncated: boolean;
-  cursor?: string;
-}
-
-/**
  * Analytics event for R2 export (data lake)
  */
 interface AnalyticsEvent {
@@ -159,6 +70,7 @@ interface FeatureFlags {
   semanticSearch: boolean;
   enhancedCaching: boolean;
   analyticsExport: boolean;
+  podcastIndex: boolean;
 }
 
 /**
@@ -169,19 +81,21 @@ const DEFAULT_FLAGS: FeatureFlags = {
   semanticSearch: false,
   enhancedCaching: false,
   analyticsExport: false,
+  podcastIndex: false,
 };
 
 /**
- * Environment bindings for the Worker
+ * Augment the generated Env with secrets (set via `wrangler secret put`)
+ * and bindings that are commented out in wrangler.jsonc.
+ * Generated bindings come from worker-configuration.d.ts via `wrangler types`.
  */
-interface Env {
-  RATE_LIMITER?: {
-    limit: (options: { key: string }) => Promise<{ success: boolean }>;
-  };
-  ANALYTICS?: AnalyticsEngine;
-  FLAGS?: KVNamespace;
-  DB?: D1Database;
-  ANALYTICS_LAKE?: R2Bucket;
+declare global {
+  interface Env {
+    DB?: D1Database;
+    PODCAST_INDEX_KEY?: string;
+    PODCAST_INDEX_SECRET?: string;
+    VECTORIZE?: Vectorize;
+  }
 }
 
 /**
@@ -198,7 +112,52 @@ interface CircuitBreakerState {
  */
 const SEARCH_LIMIT = 15 as const;
 const HOSTNAME = 'https://itunes.apple.com' as const;
+const PODCAST_INDEX_HOSTNAME = 'https://api.podcastindex.org' as const;
 const RESERVED_PARAM_TOPPODCASTS = 'toppodcasts' as const;
+
+/**
+ * Podcast Index API types
+ */
+interface PodcastIndexFeed {
+  id: number;
+  title: string;
+  url: string;
+  originalUrl: string;
+  link: string;
+  description: string;
+  author: string;
+  ownerName: string;
+  image: string;
+  artwork: string;
+  lastUpdateTime: number;
+  language: string;
+  categories: Record<string, string>;
+}
+
+interface PodcastIndexSearchResponse {
+  status: string;
+  feeds: PodcastIndexFeed[];
+  count: number;
+  query: string;
+  description: string;
+}
+
+interface ITunesSearchResult {
+  collectionId: number;
+  collectionName: string;
+  feedUrl: string;
+  artworkUrl600: string;
+  artistName: string;
+  collectionViewUrl: string;
+  trackCount: number;
+  genres: string[];
+  releaseDate: string;
+}
+
+interface ITunesSearchResponse {
+  resultCount: number;
+  results: ITunesSearchResult[];
+}
 
 /**
  * Validation Constants
@@ -210,11 +169,18 @@ const MAX_LIMIT = 200 as const;
 /**
  * Cache TTL Configuration (in seconds)
  */
-const CACHE_TTL_SEARCH = 3600 as const; // 1 hour for search results
-const CACHE_TTL_TOP = 1800 as const; // 30 minutes for top podcasts
-const CACHE_TTL_PODCAST_DETAIL = 3600 as const; // 1 hour for podcast details
+const CACHE_TTL_SEARCH = 86400 as const; // 24 hours for search results
+const CACHE_TTL_TOP = 7200 as const; // 2 hours for top podcasts (RSS updates slowly)
+const CACHE_TTL_PODCAST_DETAIL = 14400 as const; // 4 hours for podcast details (metadata rarely changes)
 const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on redeploy
 const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
+const CACHE_TTL_SEMANTIC_SEARCH = 3600 as const; // 1 hour for semantic search results
+
+/**
+ * Semantic search configuration
+ */
+const SEMANTIC_SEARCH_MODEL = '@cf/baai/bge-base-en-v1.5' as const;
+const SEMANTIC_SEARCH_TOP_K = 10 as const; // Number of similar results to return
 
 /**
  * Episode limit for podcast detail response
@@ -333,13 +299,128 @@ async function hashQuery(query: string): Promise<string> {
 }
 
 /**
+ * Generates Podcast Index API authentication headers
+ */
+async function generatePodcastIndexAuth(
+  apiKey: string,
+  apiSecret: string
+): Promise<{ 'X-Auth-Key': string; 'X-Auth-Date': string; Authorization: string }> {
+  const unixTime = Math.floor(Date.now() / 1000);
+  const authString = `${apiKey}${apiSecret}${unixTime}`;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(authString);
+  const hashBuffer = await crypto.subtle.digest('SHA-1', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const authHash = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return {
+    'X-Auth-Key': apiKey,
+    'X-Auth-Date': String(unixTime),
+    Authorization: authHash,
+  };
+}
+
+/**
+ * Transforms a Podcast Index feed to iTunes-compatible format
+ */
+function transformPodcastIndexFeed(feed: PodcastIndexFeed): ITunesSearchResult {
+  const genres = feed.categories ? Object.values(feed.categories) : [];
+  const releaseDate =
+    feed.lastUpdateTime && !isNaN(feed.lastUpdateTime)
+      ? new Date(feed.lastUpdateTime * 1000).toISOString()
+      : new Date().toISOString();
+  return {
+    collectionId: feed.id,
+    collectionName: feed.title,
+    feedUrl: feed.url || feed.originalUrl,
+    artworkUrl600: feed.artwork || feed.image,
+    artistName: feed.author || feed.ownerName,
+    collectionViewUrl: feed.link,
+    trackCount: 0,
+    genres,
+    releaseDate,
+  };
+}
+
+/**
+ * Searches podcasts using the Podcast Index API
+ */
+async function podcastIndexSearch(
+  query: string,
+  limit: number,
+  env: Env,
+  _ctx?: ExecutionContext
+): Promise<{ data: ITunesSearchResponse; cacheHit: boolean }> {
+  if (!env.PODCAST_INDEX_KEY || !env.PODCAST_INDEX_SECRET) {
+    throw new Error('Podcast Index API credentials not configured');
+  }
+
+  const searchUrl = `${PODCAST_INDEX_HOSTNAME}/api/1.0/search/byterm?q=${encodeURIComponent(query)}&max=${limit}`;
+  const cache = caches.default;
+  const cacheKey = new Request(searchUrl, { method: 'GET' });
+
+  if (isCircuitOpen()) {
+    const staleResponse = await cache.match(cacheKey);
+    if (staleResponse) {
+      log('warn', 'Circuit open, serving stale cache', { url: searchUrl });
+      const data = (await staleResponse.json()) as ITunesSearchResponse;
+      return { data, cacheHit: true };
+    }
+    throw new Error('Service temporarily unavailable');
+  }
+
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) {
+    const data = (await cachedResponse.json()) as ITunesSearchResponse;
+    return { data, cacheHit: true };
+  }
+
+  try {
+    const authHeaders = await generatePodcastIndexAuth(
+      env.PODCAST_INDEX_KEY,
+      env.PODCAST_INDEX_SECRET
+    );
+
+    const response = await fetch(searchUrl, {
+      headers: { ...authHeaders, 'User-Agent': 'Podr/1.0' },
+    });
+
+    if (!response.ok) {
+      recordFailure();
+      throw new Error(`Podcast Index API error: ${response.status} ${response.statusText}`);
+    }
+
+    recordSuccess();
+    const podcastIndexData = (await response.json()) as PodcastIndexSearchResponse;
+
+    const itunesData: ITunesSearchResponse = {
+      resultCount: podcastIndexData.count,
+      results: podcastIndexData.feeds.map(transformPodcastIndexFeed),
+    };
+
+    const cachedResponseToStore = new Response(JSON.stringify(itunesData), {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
+      },
+    });
+    void cache.put(cacheKey, cachedResponseToStore);
+
+    return { data: itunesData, cacheHit: false };
+  } catch (error) {
+    recordFailure();
+    throw error;
+  }
+}
+
+/**
  * Tracks a search query in D1 for trending analysis
  * Uses upsert pattern: increment count if exists, insert if new
  *
  * @param env - Environment bindings
  * @param query - The search query to track
+ * @param country - ISO 3166-1 alpha-2 country code (e.g., 'US', 'GB')
  */
-async function trackSearchQuery(env: Env, query: string): Promise<void> {
+async function trackSearchQuery(env: Env, query: string, country?: string): Promise<void> {
   if (!env.DB) return;
 
   try {
@@ -349,23 +430,26 @@ async function trackSearchQuery(env: Env, query: string): Promise<void> {
 
     const queryHash = await hashQuery(normalized);
     const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    // Normalize country to uppercase, null if not provided
+    const normalizedCountry = country?.toUpperCase() ?? null;
 
     // Upsert: try to update first, insert if no rows affected
+    // Using 'IS' instead of '=' to properly handle NULL comparison in SQLite
     const updateResult = await env.DB.prepare(
       `UPDATE search_queries
        SET search_count = search_count + 1, updated_at = datetime('now')
-       WHERE query_hash = ? AND date = ?`
+       WHERE query_hash = ? AND date = ? AND country IS ?`
     )
-      .bind(queryHash, today)
+      .bind(queryHash, today, normalizedCountry)
       .run();
 
     // If no rows were updated, insert new row
     if (updateResult.meta?.rows_written === 0) {
       await env.DB.prepare(
-        `INSERT INTO search_queries (query_hash, query_normalized, date)
-         VALUES (?, ?, ?)`
+        `INSERT INTO search_queries (query_hash, query_normalized, date, country)
+         VALUES (?, ?, ?, ?)`
       )
-        .bind(queryHash, normalized, today)
+        .bind(queryHash, normalized, today, normalizedCountry)
         .run();
     }
   } catch (error) {
@@ -425,12 +509,18 @@ async function getSuggestions(env: Env, prefix: string, limit = 5): Promise<stri
 /**
  * Gets trending search queries from D1
  * Returns top queries from the last 7 days
+ * If country is specified, returns country-specific trending queries with fallback to global
  *
  * @param env - Environment bindings
  * @param limit - Number of trending queries to return (default: 10)
+ * @param country - ISO 3166-1 alpha-2 country code to filter by (optional)
  * @returns Array of trending queries with counts
  */
-async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]> {
+async function getTrendingQueries(
+  env: Env,
+  limit = 10,
+  country?: string
+): Promise<TrendingQuery[]> {
   if (!env.DB) return [];
 
   try {
@@ -439,16 +529,50 @@ async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]
     weekAgo.setDate(weekAgo.getDate() - 7);
     const weekAgoStr = weekAgo.toISOString().slice(0, 10);
 
-    const result = await env.DB.prepare(
-      `SELECT query_normalized, SUM(search_count) as total_count
-       FROM search_queries
-       WHERE date >= ?
-       GROUP BY query_hash
-       ORDER BY total_count DESC
-       LIMIT ?`
-    )
-      .bind(weekAgoStr, limit)
-      .all<TrendingQuery>();
+    // Normalize country to uppercase
+    const normalizedCountry = country?.toUpperCase();
+
+    let result: D1Result<TrendingQuery>;
+
+    if (normalizedCountry) {
+      // Try country-specific trending first
+      result = await env.DB.prepare(
+        `SELECT query_normalized, SUM(search_count) as total_count
+         FROM search_queries
+         WHERE date >= ? AND country = ?
+         GROUP BY query_hash
+         ORDER BY total_count DESC
+         LIMIT ?`
+      )
+        .bind(weekAgoStr, normalizedCountry, limit)
+        .all<TrendingQuery>();
+
+      // Fallback to global trending if no country-specific data
+      if (result.results.length === 0) {
+        result = await env.DB.prepare(
+          `SELECT query_normalized, SUM(search_count) as total_count
+           FROM search_queries
+           WHERE date >= ?
+           GROUP BY query_hash
+           ORDER BY total_count DESC
+           LIMIT ?`
+        )
+          .bind(weekAgoStr, limit)
+          .all<TrendingQuery>();
+      }
+    } else {
+      // Global trending (no country filter)
+      result = await env.DB.prepare(
+        `SELECT query_normalized, SUM(search_count) as total_count
+         FROM search_queries
+         WHERE date >= ?
+         GROUP BY query_hash
+         ORDER BY total_count DESC
+         LIMIT ?`
+      )
+        .bind(weekAgoStr, limit)
+        .all<TrendingQuery>();
+    }
 
     return result.results;
   } catch (error) {
@@ -457,6 +581,162 @@ async function getTrendingQueries(env: Env, limit = 10): Promise<TrendingQuery[]
     });
     return [];
   }
+}
+
+/**
+ * Semantic search result item
+ */
+interface SemanticSearchResult {
+  id: string;
+  score: number;
+  title?: string;
+  description?: string;
+  artworkUrl?: string;
+  feedUrl?: string;
+}
+
+/**
+ * Semantic search response
+ */
+interface SemanticSearchResponse {
+  query: string;
+  results: SemanticSearchResult[];
+  resultCount: number;
+}
+
+/**
+ * Safely extracts a string value from Vectorize metadata.
+ * VectorizeVectorMetadata type is provided by worker-configuration.d.ts (via `wrangler types`).
+ * Returns undefined if the value is not a string or is undefined.
+ */
+function getMetadataString(
+  metadata: Record<string, VectorizeVectorMetadata> | undefined,
+  key: string
+): string | undefined {
+  if (!metadata || !(key in metadata)) {
+    return undefined;
+  }
+  const value = metadata[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
+ * Generates text embeddings using Workers AI
+ * Note: Workers AI embedding models require array input format even for single texts
+ *
+ * @param env - Environment bindings with AI
+ * @param text - Text to generate embedding for
+ * @returns Embedding vector or null if unavailable
+ */
+async function generateEmbedding(env: Env, text: string): Promise<number[] | null> {
+  if (!env.AI) {
+    log('warn', 'AI binding not available for embedding generation');
+    return null;
+  }
+
+  try {
+    // Workers AI embedding models require array format for text input
+    const result = await env.AI.run(SEMANTIC_SEARCH_MODEL, { text: [text] });
+
+    // Handle response format from Workers AI
+    if ('data' in result && Array.isArray(result.data) && result.data.length > 0) {
+      return result.data[0] ?? null;
+    }
+
+    log('warn', 'Unexpected embedding response format', { result: JSON.stringify(result) });
+    return null;
+  } catch (error) {
+    log('error', 'Failed to generate embedding', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+    return null;
+  }
+}
+
+/**
+ * Performs semantic search using vector similarity
+ *
+ * @param query - Search query text
+ * @param limit - Maximum number of results to return
+ * @param env - Environment bindings
+ * @returns Semantic search results with scores
+ */
+async function semanticSearchRequest(
+  query: string,
+  limit: number,
+  env: Env
+): Promise<SemanticSearchResponse> {
+  // Generate embedding for the query
+  const embedding = await generateEmbedding(env, query);
+
+  if (!embedding) {
+    return {
+      query,
+      results: [],
+      resultCount: 0,
+    };
+  }
+
+  // Check if Vectorize is available
+  if (!env.VECTORIZE) {
+    log('warn', 'Vectorize binding not available for semantic search');
+    return {
+      query,
+      results: [],
+      resultCount: 0,
+    };
+  }
+
+  try {
+    // Query the vector index for similar podcasts
+    const topK = Math.min(limit, SEMANTIC_SEARCH_TOP_K);
+    const vectorResults = await env.VECTORIZE.query(embedding, {
+      topK,
+      returnMetadata: 'all',
+    });
+
+    const results: SemanticSearchResult[] = vectorResults.matches.map((match) => ({
+      id: match.id,
+      score: match.score,
+      title: getMetadataString(match.metadata, 'title'),
+      description: getMetadataString(match.metadata, 'description'),
+      artworkUrl: getMetadataString(match.metadata, 'artworkUrl'),
+      feedUrl: getMetadataString(match.metadata, 'feedUrl'),
+    }));
+
+    return {
+      query,
+      results,
+      resultCount: results.length,
+    };
+  } catch (error) {
+    log('error', 'Semantic search failed', {
+      error: error instanceof Error ? error.message : 'Unknown error',
+      query,
+    });
+    return {
+      query,
+      results: [],
+      resultCount: 0,
+    };
+  }
+}
+
+/**
+ * Validates the limit parameter for semantic search
+ * Different from validateLimit as semantic search has a different maximum
+ *
+ * @param limit - The limit string to validate
+ * @returns Validated limit number
+ */
+function validateSemanticSearchLimit(limit: string | undefined): number {
+  if (!limit) return SEMANTIC_SEARCH_TOP_K;
+
+  const parsed = parseInt(limit, 10);
+  if (isNaN(parsed) || parsed < 1) {
+    return SEMANTIC_SEARCH_TOP_K;
+  }
+  return Math.min(parsed, SEMANTIC_SEARCH_TOP_K);
 }
 
 /**
@@ -632,19 +912,19 @@ function recordFailure(): void {
 }
 
 /**
- * Fetches data with Cloudflare Cache API support.
- * Uses cache-first strategy to minimize external API calls.
- * Returns cache hit information for observability.
+ * Cached fetch that routes through the container proxy to avoid Apple IP blocking.
+ * Falls back to direct fetch if proxy is unavailable.
  *
- * @param url - URL to fetch
+ * @param url - iTunes API URL to fetch
  * @param cacheTtl - Time to live for cache in seconds
+ * @param env - Worker environment bindings
  * @param ctx - Execution context for waitUntil (optional)
  * @returns Response from cache or fetch with cache hit info
- * @throws Error if fetch fails
  */
-async function cachedFetch(
+async function cachedFetchViaProxy(
   url: string,
   cacheTtl: number,
+  env: Env,
   ctx?: ExecutionContext
 ): Promise<CachedFetchResult> {
   const cache = caches.default;
@@ -652,7 +932,6 @@ async function cachedFetch(
 
   // Check circuit breaker
   if (isCircuitOpen()) {
-    // Try to serve from cache even if stale
     const staleResponse = await cache.match(cacheKey);
     if (staleResponse) {
       log('warn', 'Circuit open, serving stale cache', { url });
@@ -665,30 +944,35 @@ async function cachedFetch(
   const cachedResponse = await cache.match(cacheKey);
 
   if (cachedResponse) {
-    // Check if we should revalidate in background (SWR)
     const age = cachedResponse.headers.get('age');
     const ageSeconds = age ? parseInt(age, 10) : 0;
 
     if (ageSeconds > cacheTtl && ageSeconds < CACHE_STALE_TOLERANCE && ctx) {
-      // Serve stale, revalidate in background
-      ctx.waitUntil(revalidateCache(url, cacheTtl, cache, cacheKey));
+      ctx.waitUntil(revalidateCacheViaProxy(url, cacheTtl, cache, cacheKey, env));
       log('info', 'Serving stale, revalidating in background', { url, ageSeconds });
     }
 
     return { response: cachedResponse, cacheHit: true };
   }
 
-  // Not in cache, fetch from origin
+  // Not in cache, fetch via proxy
   try {
-    const response = await fetch(url);
+    let response: Response;
+
+    if (env.ITUNES_PROXY) {
+      const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+      const container = env.ITUNES_PROXY.get(containerId);
+      const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
+      response = await container.fetch(proxyUrl);
+    } else {
+      log('warn', 'ITUNES_PROXY not available, using direct fetch', { url });
+      response = await fetch(url);
+    }
 
     if (response.ok) {
       recordSuccess();
 
-      // Clone response before caching (responses can only be read once)
       const responseToCache = response.clone();
-
-      // Create a new response with cache headers
       const cachedResponseToStore = new Response(responseToCache.body, {
         status: responseToCache.status,
         statusText: responseToCache.statusText,
@@ -698,7 +982,6 @@ async function cachedFetch(
         },
       });
 
-      // Cache the response asynchronously (don't await to avoid blocking)
       void cache.put(cacheKey, cachedResponseToStore);
     } else {
       recordFailure();
@@ -712,16 +995,27 @@ async function cachedFetch(
 }
 
 /**
- * Revalidates cache entry in background
+ * Revalidates cache entry in background using container proxy
  */
-async function revalidateCache(
+async function revalidateCacheViaProxy(
   url: string,
   cacheTtl: number,
   cache: Cache,
-  cacheKey: Request
+  cacheKey: Request,
+  env: Env
 ): Promise<void> {
   try {
-    const response = await fetch(url);
+    let response: Response;
+
+    if (env.ITUNES_PROXY) {
+      const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+      const container = env.ITUNES_PROXY.get(containerId);
+      const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
+      response = await container.fetch(proxyUrl);
+    } else {
+      response = await fetch(url);
+    }
+
     if (response.ok) {
       recordSuccess();
       const cachedResponse = new Response(response.body, {
@@ -733,7 +1027,7 @@ async function revalidateCache(
         },
       });
       await cache.put(cacheKey, cachedResponse);
-      log('info', 'Cache revalidated', { url });
+      log('info', 'Cache revalidated via proxy', { url });
     } else {
       recordFailure();
       log('warn', 'Cache revalidation failed', { url, status: response.status });
@@ -794,10 +1088,11 @@ async function handleRequest(
 }
 
 /**
- * iTunes search API.
+ * Search podcasts using Podcast Index (when feature flagged) or iTunes API.
  *
  * @param query - The search query term
  * @param limit - The number of results to return (default: 15)
+ * @param env - Environment bindings
  * @param ctx - Execution context for background tasks
  * @returns Promise containing the search results and cache info
  * @throws Response with 400 status if query is empty
@@ -805,6 +1100,7 @@ async function handleRequest(
 async function searchRequest(
   query: string | undefined,
   limit: number,
+  env: Env,
   ctx?: ExecutionContext
 ): Promise<{ data: unknown; cacheHit: boolean }> {
   if (!query) {
@@ -814,42 +1110,201 @@ async function searchRequest(
     });
   }
 
+  // Check feature flag for Podcast Index
+  const usePodcastIndex = await getFlag(env, 'podcastIndex');
+
+  if (usePodcastIndex && env.PODCAST_INDEX_KEY && env.PODCAST_INDEX_SECRET) {
+    return podcastIndexSearch(query, limit, env, ctx);
+  }
+
+  // Fallback to iTunes API (via container proxy to avoid 403)
   const route = 'search';
   const mediaType = 'podcast';
   const searchUrl = `${HOSTNAME}/${route}?media=${mediaType}&term=${encodeURIComponent(query)}&limit=${limit}`;
-  const { response, cacheHit } = await cachedFetch(searchUrl, CACHE_TTL_SEARCH, ctx);
 
-  // Check if response indicates an error
-  if (response.status >= 400) {
+  // Check cache first
+  const cache = caches.default;
+  const cacheKey = new Request(searchUrl, { method: 'GET' });
+
+  if (isCircuitOpen()) {
+    const staleResponse = await cache.match(cacheKey);
+    if (staleResponse) {
+      log('warn', 'Circuit open, serving stale cache', { url: searchUrl });
+      const data = await staleResponse.json();
+      return { data, cacheHit: true };
+    }
+    throw new Error('Service temporarily unavailable');
+  }
+
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) {
+    const data = await cachedResponse.json();
+    return { data, cacheHit: true };
+  }
+
+  // Fetch via container proxy (or direct fetch as fallback)
+  let response: Response;
+
+  if (env.ITUNES_PROXY) {
+    const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+    const container = env.ITUNES_PROXY.get(containerId);
+    const proxyUrl = `http://container/?url=${encodeURIComponent(searchUrl)}`;
+    response = await container.fetch(proxyUrl);
+  } else {
+    log('warn', 'ITUNES_PROXY not available, using direct fetch', { url: searchUrl });
+    response = await fetch(searchUrl);
+  }
+
+  if (!response.ok) {
+    recordFailure();
     throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
   }
 
-  return { data: await response.json(), cacheHit };
+  recordSuccess();
+  const data = await response.json();
+
+  // Cache the response
+  const responseToCache = new Response(JSON.stringify(data), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
+    },
+  });
+  void cache.put(cacheKey, responseToCache);
+
+  return { data, cacheHit: false };
 }
 
 /**
  * iTunes top podcasts API.
+ * Uses Cloudflare Workers Container to proxy requests, avoiding 403 from Apple.
  *
  * @param limit - The number of results to return (default: 15)
  * @param genre - The genre ID filter to apply (optional)
+ * @param env - Environment bindings containing container reference
  * @param ctx - Execution context for background tasks
  * @returns Promise containing the top podcasts feed and cache info
  */
 async function topRequest(
   limit: number,
   genre: number,
+  env: Env,
   ctx?: ExecutionContext
 ): Promise<{ data: unknown; cacheHit: boolean }> {
   const genreSegment = ITUNES_API_GENRES[genre] ? `/genre=${genre}` : '';
   const topPodcastsUrl = `${HOSTNAME}/us/rss/${RESERVED_PARAM_TOPPODCASTS}/limit=${limit}${genreSegment}/json`;
-  const { response, cacheHit } = await cachedFetch(topPodcastsUrl, CACHE_TTL_TOP, ctx);
 
-  // Check if response indicates an error
-  if (response.status >= 400) {
+  // Check cache first
+  const cache = caches.default;
+  const cacheKey = new Request(topPodcastsUrl, { method: 'GET' });
+
+  // Check circuit breaker
+  if (isCircuitOpen()) {
+    const staleResponse = await cache.match(cacheKey);
+    if (staleResponse) {
+      log('warn', 'Circuit open, serving stale cache', { url: topPodcastsUrl });
+      const data = await staleResponse.json();
+      return { data, cacheHit: true };
+    }
+    throw new Error('Service temporarily unavailable');
+  }
+
+  // Try cache
+  const cachedResponse = await cache.match(cacheKey);
+  if (cachedResponse) {
+    const age = cachedResponse.headers.get('age');
+    const ageSeconds = age ? parseInt(age, 10) : 0;
+
+    if (ageSeconds > CACHE_TTL_TOP && ageSeconds < CACHE_STALE_TOLERANCE && ctx) {
+      ctx.waitUntil(revalidateTopPodcastsCache(topPodcastsUrl, env, cache, cacheKey));
+      log('info', 'Serving stale, revalidating in background', { url: topPodcastsUrl, ageSeconds });
+    }
+
+    const data = await cachedResponse.json();
+    return { data, cacheHit: true };
+  }
+
+  // Fetch via container proxy (or direct fetch as fallback)
+  let response: Response;
+
+  if (env.ITUNES_PROXY) {
+    // Use container to fetch from iTunes (avoids 403)
+    const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+    const container = env.ITUNES_PROXY.get(containerId);
+    // Container fetch requires absolute URL - hostname is ignored, only path matters
+    const proxyUrl = `http://container/?url=${encodeURIComponent(topPodcastsUrl)}`;
+    response = await container.fetch(proxyUrl);
+  } else {
+    // Fallback to direct fetch (may get 403)
+    log('warn', 'ITUNES_PROXY not available, using direct fetch', { url: topPodcastsUrl });
+    response = await fetch(topPodcastsUrl);
+  }
+
+  if (!response.ok) {
+    recordFailure();
     throw new Error(`iTunes API error: ${response.status} ${response.statusText}`);
   }
 
-  return { data: await response.json(), cacheHit };
+  recordSuccess();
+
+  const data = await response.json();
+
+  // Cache the response
+  const responseToCache = new Response(JSON.stringify(data), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': `public, max-age=${CACHE_TTL_TOP}`,
+    },
+  });
+  void cache.put(cacheKey, responseToCache);
+
+  return { data, cacheHit: false };
+}
+
+/**
+ * Revalidates top podcasts cache entry in background via container proxy
+ */
+async function revalidateTopPodcastsCache(
+  url: string,
+  env: Env,
+  cache: Cache,
+  cacheKey: Request
+): Promise<void> {
+  try {
+    let response: Response;
+
+    if (env.ITUNES_PROXY) {
+      const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+      const container = env.ITUNES_PROXY.get(containerId);
+      // Container fetch requires absolute URL - hostname is ignored, only path matters
+      const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
+      response = await container.fetch(proxyUrl);
+    } else {
+      response = await fetch(url);
+    }
+
+    if (response.ok) {
+      recordSuccess();
+      const data = await response.json();
+      const cachedResponse = new Response(JSON.stringify(data), {
+        headers: {
+          'Content-Type': 'application/json',
+          'Cache-Control': `public, max-age=${CACHE_TTL_TOP}`,
+        },
+      });
+      await cache.put(cacheKey, cachedResponse);
+      log('info', 'Top podcasts cache revalidated', { url });
+    } else {
+      recordFailure();
+      log('warn', 'Top podcasts cache revalidation failed', { url, status: response.status });
+    }
+  } catch (error) {
+    recordFailure();
+    log('error', 'Top podcasts cache revalidation error', {
+      url,
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
 }
 
 /**
@@ -903,11 +1358,17 @@ interface PodcastDetailResponse {
  */
 async function podcastDetailRequest(
   podcastId: number,
+  env: Env,
   ctx?: ExecutionContext
 ): Promise<{ data: PodcastDetailResponse; cacheHit: boolean }> {
-  // Fetch podcast with episodes using lookup API
+  // Fetch podcast with episodes using lookup API via container proxy
   const lookupUrl = `${HOSTNAME}/lookup?id=${podcastId}&entity=podcastEpisode&limit=${PODCAST_EPISODE_LIMIT}`;
-  const { response, cacheHit } = await cachedFetch(lookupUrl, CACHE_TTL_PODCAST_DETAIL, ctx);
+  const { response, cacheHit } = await cachedFetchViaProxy(
+    lookupUrl,
+    CACHE_TTL_PODCAST_DETAIL,
+    env,
+    ctx
+  );
 
   // Check if response indicates an error
   if (response.status >= 400) {
@@ -995,14 +1456,25 @@ function handleHealthCheck(request: Request): Response {
 /**
  * Deep health check - tests upstream connectivity
  */
-async function handleDeepHealthCheck(request: Request): Promise<Response> {
+async function handleDeepHealthCheck(request: Request, env: Env): Promise<Response> {
   const startTime = Date.now();
   let upstreamOk = false;
   let upstreamLatency = 0;
 
   try {
     const testUrl = `${HOSTNAME}/search?media=podcast&term=test&limit=1`;
-    const response = await fetch(testUrl);
+    let response: Response;
+
+    // Use container proxy to test the actual production path
+    if (env.ITUNES_PROXY) {
+      const containerId = env.ITUNES_PROXY.idFromName('itunes-proxy');
+      const container = env.ITUNES_PROXY.get(containerId);
+      const proxyUrl = `http://container/?url=${encodeURIComponent(testUrl)}`;
+      response = await container.fetch(proxyUrl);
+    } else {
+      response = await fetch(testUrl);
+    }
+
     upstreamLatency = Date.now() - startTime;
     upstreamOk = response.ok;
   } catch {
@@ -1155,11 +1627,7 @@ function getApiSchema(): OpenAPIV3.Document {
                     'Cache duration: indefinitely (immutable) for schema, 1 hour for search, 30 minutes for top podcasts',
                   schema: {
                     type: 'string',
-                    examples: [
-                      'public, max-age=31536000, immutable',
-                      'public, max-age=3600',
-                      'public, max-age=1800',
-                    ],
+                    example: 'public, max-age=31536000, immutable',
                   },
                 },
                 'X-Cache': {
@@ -1234,7 +1702,7 @@ function getApiSchema(): OpenAPIV3.Document {
         get: {
           summary: 'Trending Queries',
           description:
-            'Returns trending podcast search queries from the last 7 days. Feature-flagged endpoint - returns 404 when disabled.',
+            'Returns trending podcast search queries from the last 7 days. Feature-flagged endpoint - returns 404 when disabled. Supports geographic filtering with fallback to global trending.',
           operationId: 'trendingQueries',
           parameters: [
             {
@@ -1247,6 +1715,18 @@ function getApiSchema(): OpenAPIV3.Document {
                 default: 10,
                 minimum: 1,
                 maximum: 50,
+              },
+            },
+            {
+              name: 'country',
+              in: 'query',
+              description:
+                'ISO 3166-1 alpha-2 country code to filter trending queries (e.g., US, GB, JP). Falls back to global trending if no country-specific data available.',
+              required: false,
+              schema: {
+                type: 'string',
+                pattern: '^[A-Za-z]{2}$',
+                example: 'US',
               },
             },
           ],
@@ -1275,6 +1755,12 @@ function getApiSchema(): OpenAPIV3.Document {
                         type: 'string',
                         description: 'Time period for trending data',
                         example: '7d',
+                      },
+                      country: {
+                        type: 'string',
+                        description:
+                          'Requested country code for the trending data (or "global" if no valid country was provided). Data may fall back to global results when no country-specific data exists.',
+                        example: 'US',
                       },
                       generatedAt: {
                         type: 'string',
@@ -1357,6 +1843,119 @@ function getApiSchema(): OpenAPIV3.Document {
                   },
                 },
               },
+            },
+            '404': {
+              description: 'Feature not enabled',
+            },
+          },
+        },
+      },
+      '/semantic-search': {
+        get: {
+          summary: 'Semantic Search',
+          description:
+            'Performs semantic search using AI embeddings to find podcasts similar to the query meaning, even without exact keyword matches. Feature-flagged endpoint - returns 404 when disabled.',
+          operationId: 'semanticSearch',
+          parameters: [
+            {
+              name: 'q',
+              in: 'query',
+              description: 'Search query for semantic similarity matching',
+              required: true,
+              schema: {
+                type: 'string',
+                maxLength: MAX_QUERY_LENGTH,
+                example: 'learn about artificial intelligence',
+              },
+            },
+            {
+              name: 'limit',
+              in: 'query',
+              description: 'Number of results to return',
+              required: false,
+              schema: {
+                type: 'integer',
+                default: 10,
+                minimum: 1,
+                maximum: 10,
+              },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Semantic search results',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      query: {
+                        type: 'string',
+                        description: 'The original search query',
+                        example: 'learn about artificial intelligence',
+                      },
+                      results: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: {
+                              type: 'string',
+                              description: 'Unique podcast identifier',
+                            },
+                            score: {
+                              type: 'number',
+                              description: 'Similarity score (0-1, higher is more similar)',
+                              example: 0.89,
+                            },
+                            title: {
+                              type: 'string',
+                              description: 'Podcast title',
+                            },
+                            description: {
+                              type: 'string',
+                              description: 'Podcast description',
+                            },
+                            artworkUrl: {
+                              type: 'string',
+                              description: 'Podcast artwork URL',
+                            },
+                            feedUrl: {
+                              type: 'string',
+                              description: 'Podcast RSS feed URL',
+                            },
+                          },
+                        },
+                        description: 'List of semantically similar podcasts',
+                      },
+                      resultCount: {
+                        type: 'integer',
+                        description: 'Number of results returned',
+                        example: 10,
+                      },
+                    },
+                  },
+                },
+              },
+              headers: {
+                'Cache-Control': {
+                  description: 'Cache duration: 1 hour',
+                  schema: {
+                    type: 'string',
+                    example: 'public, max-age=3600',
+                  },
+                },
+                'X-Cache': {
+                  description: 'Cache hit indicator',
+                  schema: {
+                    type: 'string',
+                    enum: ['HIT', 'MISS'],
+                  },
+                },
+              },
+            },
+            '400': {
+              description: 'Bad request - missing or invalid query parameter',
             },
             '404': {
               description: 'Feature not enabled',
@@ -1515,6 +2114,16 @@ function getClientIP(request: Request): string {
 }
 
 /**
+ * iTunes proxy container class.
+ * Uses Cloudflare Workers Containers to proxy iTunes API calls,
+ * avoiding 403 errors from Apple blocking Worker IPs.
+ */
+export class ITunesProxy extends Container {
+  defaultPort = 8080;
+  sleepAfter = '5m'; // Sleep after 5 min of inactivity
+}
+
+/**
  * Modern Module Worker export with fetch handler.
  * Handles podcast search and discovery requests.
  */
@@ -1537,7 +2146,7 @@ export default {
         return handleHealthCheck(request);
       }
       if (pathname === '/health/deep') {
-        return await handleDeepHealthCheck(request);
+        return await handleDeepHealthCheck(request, env);
       }
 
       // Trending queries endpoint (feature flagged)
@@ -1549,12 +2158,19 @@ export default {
 
         const limitParam = searchParams.get('limit');
         const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 10, 1), 50) : 10;
-        const trending = await getTrendingQueries(env, limit);
+        const countryParam = searchParams.get('country');
+        // Validate country code format (2 uppercase letters)
+        const country =
+          countryParam && /^[A-Za-z]{2}$/.test(countryParam)
+            ? countryParam.toUpperCase()
+            : undefined;
+        const trending = await getTrendingQueries(env, limit, country);
 
         const duration = Date.now() - startTime;
         log('info', 'Trending queries request', {
           requestId,
           limit,
+          country,
           resultCount: trending.length,
           duration,
         });
@@ -1567,6 +2183,7 @@ export default {
               count: t.total_count,
             })),
             period: '7d',
+            country: country ?? 'global',
             generatedAt: new Date().toISOString(),
           }),
           {
@@ -1632,9 +2249,73 @@ export default {
         );
       }
 
+      // Semantic search endpoint (feature flagged)
+      if (pathname === '/semantic-search') {
+        const semanticSearchEnabled = await getFlag(env, 'semanticSearch');
+        if (!semanticSearchEnabled) {
+          return createErrorResponse('Not Found', 404, 'Not Found');
+        }
+
+        const query = searchParams.get('q');
+        if (!query) {
+          return createErrorResponse('Missing required query parameter: q', 400, 'Bad Request');
+        }
+
+        // Validate query
+        const queryError = validateQuery(query);
+        if (queryError) {
+          log('warn', 'Query validation failed', { requestId, query, error: queryError });
+          return createErrorResponse(queryError, 400, 'Bad Request');
+        }
+
+        const limit = validateSemanticSearchLimit(searchParams.get('limit') ?? undefined);
+
+        const searchResult = await semanticSearchRequest(query, limit, env);
+
+        const duration = Date.now() - startTime;
+        log('info', 'Semantic search request', {
+          requestId,
+          query,
+          limit,
+          resultCount: searchResult.resultCount,
+          duration,
+        });
+        trackMetrics(env, 'semanticSearch', false, 200, duration, colo, searchResult.resultCount);
+
+        // Export to R2 data lake (non-blocking)
+        if (env.ANALYTICS_LAKE) {
+          const analyticsEvent = createAnalyticsEvent(
+            requestId,
+            'semanticSearch',
+            false,
+            200,
+            duration,
+            colo,
+            {
+              query,
+              limit,
+              resultCount: searchResult.resultCount,
+              country: (request.cf?.country as string) ?? undefined,
+            }
+          );
+          ctx.waitUntil(exportAnalyticsEvent(env, analyticsEvent));
+        }
+
+        return new Response(JSON.stringify(searchResult), {
+          headers: {
+            'content-type': 'application/json;charset=UTF-8',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET',
+            'Cache-Control': `public, max-age=${CACHE_TTL_SEMANTIC_SEARCH}`,
+            'X-Cache': 'MISS',
+            ...SECURITY_HEADERS,
+          },
+        });
+      }
+
       // Podcast detail endpoint: /podcast/:id
       const podcastMatch = pathname.match(/^\/podcast\/(\d+)$/);
-      if (podcastMatch) {
+      if (podcastMatch?.[1]) {
         const podcastId = parseInt(podcastMatch[1], 10);
 
         // Validate podcast ID
@@ -1643,7 +2324,7 @@ export default {
           return createErrorResponse('Invalid podcast ID', 400, 'Bad Request');
         }
 
-        const { data, cacheHit } = await podcastDetailRequest(podcastId, ctx);
+        const { data, cacheHit } = await podcastDetailRequest(podcastId, env, ctx);
         const duration = Date.now() - startTime;
 
         log('info', 'Podcast detail request', {
@@ -1733,7 +2414,7 @@ export default {
 
       // Handle top podcasts request
       if (query === RESERVED_PARAM_TOPPODCASTS) {
-        const { data, cacheHit } = await topRequest(limit, genre, ctx);
+        const { data, cacheHit } = await topRequest(limit, genre, env, ctx);
         const duration = Date.now() - startTime;
         const feed = data as { feed?: { entry?: unknown[] } };
         const resultCount = feed?.feed?.entry?.length ?? 0;
@@ -1772,7 +2453,7 @@ export default {
       }
 
       // Handle search request
-      const { data, cacheHit } = await searchRequest(query, limit, ctx);
+      const { data, cacheHit } = await searchRequest(query, limit, env, ctx);
       const duration = Date.now() - startTime;
       const results = data as { resultCount?: number };
       const resultCount = results?.resultCount ?? 0;
@@ -1789,7 +2470,8 @@ export default {
 
       // Track search query for trending (non-blocking)
       if (query && resultCount > 0) {
-        ctx.waitUntil(trackSearchQuery(env, query));
+        const requestCountry = (request.cf?.country as string) ?? undefined;
+        ctx.waitUntil(trackSearchQuery(env, query, requestCountry));
       }
 
       // Export to R2 data lake (non-blocking, feature-flagged)
@@ -1839,5 +2521,40 @@ export default {
       trackMetrics(env, 'error', false, 500, duration, colo);
       return createErrorResponse(errorMessage, 500, 'Internal Server Error');
     }
+  },
+
+  /**
+   * Scheduled handler for cache pre-warming.
+   * Runs on cron schedule defined in wrangler.toml to pre-warm cache with popular queries.
+   */
+  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
+    const popularQueries = [
+      'news',
+      'comedy',
+      'true crime',
+      'technology',
+      'business',
+      'health',
+      'sports',
+      'music',
+      'science',
+      'history',
+    ];
+
+    log('info', 'Cache pre-warming started', { queryCount: popularQueries.length });
+
+    const warmupPromises = popularQueries.map(async (query) => {
+      try {
+        await searchRequest(query, 25, env, ctx);
+        log('info', 'Cache warmed', { query });
+      } catch (error) {
+        log('warn', 'Cache warming failed', {
+          query,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    });
+
+    ctx.waitUntil(Promise.allSettled(warmupPromises));
   },
 };

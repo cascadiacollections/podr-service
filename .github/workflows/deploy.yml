@@ -46,8 +46,15 @@ jobs:
           package.json
           yarn.lock
           tsconfig.json
-          wrangler.toml
+          wrangler.jsonc
+          Dockerfile
+          container_src
+          .yarn
+          .yarnrc.yml
         sparse-checkout-cone-mode: false
+
+    - name: Enable Corepack
+      run: corepack enable
 
     - name: Setup Node.js
       uses: actions/setup-node@v6
@@ -56,7 +63,7 @@ jobs:
         cache: 'yarn'
 
     - name: Install dependencies
-      run: yarn install --frozen-lockfile --prefer-offline
+      run: yarn install --immutable
 
     - name: Deploy to Cloudflare Workers
       run: yarn wrangler deploy

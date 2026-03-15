@@ -5,7 +5,7 @@
   "tsconfig": "./tsconfig.json",
 
   // Modern Wrangler 4 configuration - use latest date for all stability improvements
-  "compatibility_date": "2026-01-20",
+  "compatibility_date": "2026-03-13",
   "compatibility_flags": [
     "nodejs_compat",
     "nodejs_als",
