@@ -5,7 +5,7 @@
   "tsconfig": "./tsconfig.json",
 
   // Modern Wrangler 4 configuration - use latest date for all stability improvements
-  "compatibility_date": "2026-03-13",
+  "compatibility_date": "2026-03-17",
   "compatibility_flags": [
     "nodejs_compat",
     "nodejs_als",
@@ -124,7 +124,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ITunesProxy"]
+      "new_classes": ["ITunesProxy"]
     }
   ]
 }

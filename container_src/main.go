@@ -2,6 +2,7 @@ package main
 
 import (
 	"io"
+	"log"
 	"net/http"
 	"os"
 )
@@ -36,12 +37,18 @@ func main() {
 
 		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			log.Printf("error copying response body: %v", err)
+		}
 	})
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-	http.ListenAndServe(":"+port, nil)
+
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatalf("server failed: %v", err)
+	}
 }

@@ -352,7 +352,7 @@ async function podcastIndexSearch(
   query: string,
   limit: number,
   env: Env,
-  _ctx?: ExecutionContext
+  ctx?: ExecutionContext
 ): Promise<{ data: ITunesSearchResponse; cacheHit: boolean }> {
   if (!env.PODCAST_INDEX_KEY || !env.PODCAST_INDEX_SECRET) {
     throw new Error('Podcast Index API credentials not configured');
@@ -407,7 +407,11 @@ async function podcastIndexSearch(
         'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
       },
     });
-    void cache.put(cacheKey, cachedResponseToStore);
+    if (ctx) {
+      ctx.waitUntil(cache.put(cacheKey, cachedResponseToStore));
+    } else {
+      await cache.put(cacheKey, cachedResponseToStore);
+    }
 
     return { data: itunesData, cacheHit: false };
   } catch (error) {
@@ -986,7 +990,11 @@ async function cachedFetchViaProxy(
         },
       });
 
-      void cache.put(cacheKey, cachedResponseToStore);
+      if (ctx) {
+        ctx.waitUntil(cache.put(cacheKey, cachedResponseToStore));
+      } else {
+        await cache.put(cacheKey, cachedResponseToStore);
+      }
     } else {
       recordFailure();
     }
@@ -1174,7 +1182,11 @@ async function searchRequest(
       'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
     },
   });
-  void cache.put(cacheKey, responseToCache);
+  if (ctx) {
+    ctx.waitUntil(cache.put(cacheKey, responseToCache));
+  } else {
+    await cache.put(cacheKey, responseToCache);
+  }
 
   return { data, cacheHit: false };
 }
@@ -1260,7 +1272,11 @@ async function topRequest(
       'Cache-Control': `public, max-age=${CACHE_TTL_TOP}`,
     },
   });
-  void cache.put(cacheKey, responseToCache);
+  if (ctx) {
+    ctx.waitUntil(cache.put(cacheKey, responseToCache));
+  } else {
+    await cache.put(cacheKey, responseToCache);
+  }
 
   return { data, cacheHit: false };
 }
