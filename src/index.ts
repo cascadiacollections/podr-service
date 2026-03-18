@@ -114,6 +114,10 @@ const SEARCH_LIMIT = 15 as const;
 const HOSTNAME = 'https://itunes.apple.com' as const;
 const PODCAST_INDEX_HOSTNAME = 'https://api.podcastindex.org' as const;
 const RESERVED_PARAM_TOPPODCASTS = 'toppodcasts' as const;
+const ITUNES_FETCH_HEADERS = {
+  'User-Agent': 'Podr/1.0 (+https://www.podrapp.com) podcast-search',
+  Accept: 'application/json',
+} as const;
 
 /**
  * Podcast Index API types
@@ -348,7 +352,7 @@ async function podcastIndexSearch(
   query: string,
   limit: number,
   env: Env,
-  _ctx?: ExecutionContext
+  ctx?: ExecutionContext
 ): Promise<{ data: ITunesSearchResponse; cacheHit: boolean }> {
   if (!env.PODCAST_INDEX_KEY || !env.PODCAST_INDEX_SECRET) {
     throw new Error('Podcast Index API credentials not configured');
@@ -381,7 +385,7 @@ async function podcastIndexSearch(
     );
 
     const response = await fetch(searchUrl, {
-      headers: { ...authHeaders, 'User-Agent': 'Podr/1.0' },
+      headers: { ...authHeaders, ...ITUNES_FETCH_HEADERS },
     });
 
     if (!response.ok) {
@@ -403,7 +407,11 @@ async function podcastIndexSearch(
         'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
       },
     });
-    void cache.put(cacheKey, cachedResponseToStore);
+    if (ctx) {
+      ctx.waitUntil(cache.put(cacheKey, cachedResponseToStore));
+    } else {
+      await cache.put(cacheKey, cachedResponseToStore);
+    }
 
     return { data: itunesData, cacheHit: false };
   } catch (error) {
@@ -966,7 +974,7 @@ async function cachedFetchViaProxy(
       response = await container.fetch(proxyUrl);
     } else {
       log('warn', 'ITUNES_PROXY not available, using direct fetch', { url });
-      response = await fetch(url);
+      response = await fetch(url, { headers: ITUNES_FETCH_HEADERS });
     }
 
     if (response.ok) {
@@ -982,7 +990,11 @@ async function cachedFetchViaProxy(
         },
       });
 
-      void cache.put(cacheKey, cachedResponseToStore);
+      if (ctx) {
+        ctx.waitUntil(cache.put(cacheKey, cachedResponseToStore));
+      } else {
+        await cache.put(cacheKey, cachedResponseToStore);
+      }
     } else {
       recordFailure();
     }
@@ -1013,7 +1025,7 @@ async function revalidateCacheViaProxy(
       const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
       response = await container.fetch(proxyUrl);
     } else {
-      response = await fetch(url);
+      response = await fetch(url, { headers: ITUNES_FETCH_HEADERS });
     }
 
     if (response.ok) {
@@ -1152,7 +1164,7 @@ async function searchRequest(
     response = await container.fetch(proxyUrl);
   } else {
     log('warn', 'ITUNES_PROXY not available, using direct fetch', { url: searchUrl });
-    response = await fetch(searchUrl);
+    response = await fetch(searchUrl, { headers: ITUNES_FETCH_HEADERS });
   }
 
   if (!response.ok) {
@@ -1170,7 +1182,11 @@ async function searchRequest(
       'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
     },
   });
-  void cache.put(cacheKey, responseToCache);
+  if (ctx) {
+    ctx.waitUntil(cache.put(cacheKey, responseToCache));
+  } else {
+    await cache.put(cacheKey, responseToCache);
+  }
 
   return { data, cacheHit: false };
 }
@@ -1237,7 +1253,7 @@ async function topRequest(
   } else {
     // Fallback to direct fetch (may get 403)
     log('warn', 'ITUNES_PROXY not available, using direct fetch', { url: topPodcastsUrl });
-    response = await fetch(topPodcastsUrl);
+    response = await fetch(topPodcastsUrl, { headers: ITUNES_FETCH_HEADERS });
   }
 
   if (!response.ok) {
@@ -1256,7 +1272,11 @@ async function topRequest(
       'Cache-Control': `public, max-age=${CACHE_TTL_TOP}`,
     },
   });
-  void cache.put(cacheKey, responseToCache);
+  if (ctx) {
+    ctx.waitUntil(cache.put(cacheKey, responseToCache));
+  } else {
+    await cache.put(cacheKey, responseToCache);
+  }
 
   return { data, cacheHit: false };
 }
@@ -1280,7 +1300,7 @@ async function revalidateTopPodcastsCache(
       const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
       response = await container.fetch(proxyUrl);
     } else {
-      response = await fetch(url);
+      response = await fetch(url, { headers: ITUNES_FETCH_HEADERS });
     }
 
     if (response.ok) {
@@ -2525,36 +2545,83 @@ export default {
 
   /**
    * Scheduled handler for cache pre-warming.
-   * Runs on cron schedule defined in wrangler.toml to pre-warm cache with popular queries.
+   * Runs daily at 02:00 UTC (after iTunes catalog refresh) to pre-warm cache with popular queries.
+   * Fetches top 10 queries from D1 trending data (last 7 days) and pre-caches search results
+   * in polite batches of 5 with a 500ms pause between batches.
    */
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    const popularQueries = [
-      'news',
-      'comedy',
-      'true crime',
-      'technology',
-      'business',
-      'health',
-      'sports',
-      'music',
-      'science',
-      'history',
-    ];
+    const startTime = Date.now();
+    const BATCH_SIZE = 5;
+    const BATCH_DELAY_MS = 500;
 
-    log('info', 'Cache pre-warming started', { queryCount: popularQueries.length });
+    // Fetch top 10 trending queries from D1
+    const trendingQueries = await getTrendingQueries(env, 10);
 
-    const warmupPromises = popularQueries.map(async (query) => {
-      try {
-        await searchRequest(query, 25, env, ctx);
-        log('info', 'Cache warmed', { query });
-      } catch (error) {
-        log('warn', 'Cache warming failed', {
-          query,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-      }
+    // Fallback to hardcoded queries if D1 is not available or returns no results
+    const queries =
+      trendingQueries.length > 0
+        ? trendingQueries.map((q) => q.query_normalized)
+        : [
+            'news',
+            'comedy',
+            'true crime',
+            'technology',
+            'business',
+            'health',
+            'sports',
+            'music',
+            'science',
+            'history',
+          ];
+
+    log('info', 'Cache warming started', {
+      queryCount: queries.length,
+      source: trendingQueries.length > 0 ? 'trending' : 'fallback',
     });
 
-    ctx.waitUntil(Promise.allSettled(warmupPromises));
+    ctx.waitUntil(
+      (async () => {
+        const results: Array<{ query: string; success: boolean }> = [];
+
+        // Process in batches to avoid thundering-herd on the iTunes API
+        for (let i = 0; i < queries.length; i += BATCH_SIZE) {
+          const batch = queries.slice(i, i + BATCH_SIZE);
+          const batchResults = await Promise.allSettled(
+            batch.map(async (query) => {
+              try {
+                await searchRequest(query, 25, env, ctx);
+                log('debug', 'Cache warmed for query', { query });
+                return { query, success: true };
+              } catch (error) {
+                log('warn', 'Cache warming failed for query', {
+                  query,
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                });
+                return { query, success: false };
+              }
+            })
+          );
+
+          for (const r of batchResults) {
+            if (r.status === 'fulfilled') results.push(r.value);
+          }
+
+          // Pause between batches — be a polite API consumer
+          if (i + BATCH_SIZE < queries.length) {
+            await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+          }
+        }
+
+        const successCount = results.filter((r) => r.success).length;
+        const duration = Date.now() - startTime;
+
+        log('info', 'Cache warming completed', {
+          duration,
+          totalQueries: queries.length,
+          successCount,
+          failureCount: results.length - successCount,
+        });
+      })()
+    );
   },
 };

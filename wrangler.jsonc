@@ -5,7 +5,7 @@
   "tsconfig": "./tsconfig.json",
 
   // Modern Wrangler 4 configuration - use latest date for all stability improvements
-  "compatibility_date": "2026-03-13",
+  "compatibility_date": "2026-03-17",
   "compatibility_flags": [
     "nodejs_compat",
     "nodejs_als",
@@ -100,7 +100,7 @@
 
   // Scheduled triggers for cache pre-warming
   "triggers": {
-    "crons": ["0 */6 * * *"] // Run every 6 hours
+    "crons": ["0 2 * * *"] // Run daily at 02:00 UTC (after iTunes catalog refresh)
   },
 
   // Container configuration for iTunes proxy (avoids Apple blocking Worker IPs)
@@ -124,7 +124,7 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["ITunesProxy"]
+      "new_classes": ["ITunesProxy"]
     }
   ]
 }
