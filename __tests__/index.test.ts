@@ -2256,7 +2256,7 @@ describe('Podr Service Worker', () => {
   describe('scheduled handler', () => {
     test('should warm cache with trending queries from D1', async () => {
       const mockScheduledEvent = {
-        cron: '0 * * * *',
+        cron: '0 2 * * *',
         scheduledTime: Date.now(),
         type: 'scheduled',
       } as ScheduledEvent;
@@ -2299,7 +2299,7 @@ describe('Podr Service Worker', () => {
 
     test('should fallback to hardcoded queries when D1 is not available', async () => {
       const mockScheduledEvent = {
-        cron: '0 * * * *',
+        cron: '0 2 * * *',
         scheduledTime: Date.now(),
         type: 'scheduled',
       } as ScheduledEvent;
@@ -2333,7 +2333,7 @@ describe('Podr Service Worker', () => {
 
     test('should handle cache warming failures gracefully', async () => {
       const mockScheduledEvent = {
-        cron: '0 * * * *',
+        cron: '0 2 * * *',
         scheduledTime: Date.now(),
         type: 'scheduled',
       } as ScheduledEvent;
@@ -2361,15 +2361,15 @@ describe('Podr Service Worker', () => {
       ).resolves.not.toThrow();
     });
 
-    test('should warm cache for top 50 queries when available', async () => {
+    test('should warm cache for top 10 queries when available', async () => {
       const mockScheduledEvent = {
-        cron: '0 * * * *',
+        cron: '0 2 * * *',
         scheduledTime: Date.now(),
         type: 'scheduled',
       } as ScheduledEvent;
 
-      // Create 50 trending queries
-      const trendingData = Array.from({ length: 50 }, (_, i) => ({
+      // Create 10 trending queries
+      const trendingData = Array.from({ length: 10 }, (_, i) => ({
         query_normalized: `query${i + 1}`,
         total_count: 150 - i,
       }));

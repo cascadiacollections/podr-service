@@ -114,6 +114,10 @@ const SEARCH_LIMIT = 15 as const;
 const HOSTNAME = 'https://itunes.apple.com' as const;
 const PODCAST_INDEX_HOSTNAME = 'https://api.podcastindex.org' as const;
 const RESERVED_PARAM_TOPPODCASTS = 'toppodcasts' as const;
+const ITUNES_FETCH_HEADERS = {
+  'User-Agent': 'Podr/1.0 (+https://www.podrapp.com) podcast-search',
+  Accept: 'application/json',
+} as const;
 
 /**
  * Podcast Index API types
@@ -381,7 +385,7 @@ async function podcastIndexSearch(
     );
 
     const response = await fetch(searchUrl, {
-      headers: { ...authHeaders, 'User-Agent': 'Podr/1.0' },
+      headers: { ...authHeaders, ...ITUNES_FETCH_HEADERS },
     });
 
     if (!response.ok) {
@@ -966,7 +970,7 @@ async function cachedFetchViaProxy(
       response = await container.fetch(proxyUrl);
     } else {
       log('warn', 'ITUNES_PROXY not available, using direct fetch', { url });
-      response = await fetch(url);
+      response = await fetch(url, { headers: ITUNES_FETCH_HEADERS });
     }
 
     if (response.ok) {
@@ -1013,7 +1017,7 @@ async function revalidateCacheViaProxy(
       const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
       response = await container.fetch(proxyUrl);
     } else {
-      response = await fetch(url);
+      response = await fetch(url, { headers: ITUNES_FETCH_HEADERS });
     }
 
     if (response.ok) {
@@ -1152,7 +1156,7 @@ async function searchRequest(
     response = await container.fetch(proxyUrl);
   } else {
     log('warn', 'ITUNES_PROXY not available, using direct fetch', { url: searchUrl });
-    response = await fetch(searchUrl);
+    response = await fetch(searchUrl, { headers: ITUNES_FETCH_HEADERS });
   }
 
   if (!response.ok) {
@@ -1237,7 +1241,7 @@ async function topRequest(
   } else {
     // Fallback to direct fetch (may get 403)
     log('warn', 'ITUNES_PROXY not available, using direct fetch', { url: topPodcastsUrl });
-    response = await fetch(topPodcastsUrl);
+    response = await fetch(topPodcastsUrl, { headers: ITUNES_FETCH_HEADERS });
   }
 
   if (!response.ok) {
@@ -1280,7 +1284,7 @@ async function revalidateTopPodcastsCache(
       const proxyUrl = `http://container/?url=${encodeURIComponent(url)}`;
       response = await container.fetch(proxyUrl);
     } else {
-      response = await fetch(url);
+      response = await fetch(url, { headers: ITUNES_FETCH_HEADERS });
     }
 
     if (response.ok) {
@@ -2525,14 +2529,17 @@ export default {
 
   /**
    * Scheduled handler for cache pre-warming.
-   * Runs on cron schedule defined in wrangler.jsonc to pre-warm cache with popular queries.
-   * Fetches top 50 queries from D1 trending data (last 7 days) and pre-caches search results.
+   * Runs daily at 02:00 UTC (after iTunes catalog refresh) to pre-warm cache with popular queries.
+   * Fetches top 10 queries from D1 trending data (last 7 days) and pre-caches search results
+   * in polite batches of 5 with a 500ms pause between batches.
    */
   async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     const startTime = Date.now();
+    const BATCH_SIZE = 5;
+    const BATCH_DELAY_MS = 500;
 
-    // Fetch top 50 trending queries from D1
-    const trendingQueries = await getTrendingQueries(env, 50);
+    // Fetch top 10 trending queries from D1
+    const trendingQueries = await getTrendingQueries(env, 10);
 
     // Fallback to hardcoded queries if D1 is not available or returns no results
     const queries =
@@ -2556,36 +2563,49 @@ export default {
       source: trendingQueries.length > 0 ? 'trending' : 'fallback',
     });
 
-    const warmupPromises = queries.map(async (query) => {
-      try {
-        await searchRequest(query, 25, env, ctx);
-        log('debug', 'Cache warmed for query', { query });
-        return { query, success: true };
-      } catch (error) {
-        log('warn', 'Cache warming failed for query', {
-          query,
-          error: error instanceof Error ? error.message : 'Unknown error',
-        });
-        return { query, success: false };
-      }
-    });
-
-    // Use waitUntil to allow the function to return immediately
     ctx.waitUntil(
-      Promise.allSettled(warmupPromises).then((results) => {
-        const successCount = results.filter(
-          (r) => r.status === 'fulfilled' && r.value.success
-        ).length;
-        const failureCount = results.length - successCount;
+      (async () => {
+        const results: Array<{ query: string; success: boolean }> = [];
+
+        // Process in batches to avoid thundering-herd on the iTunes API
+        for (let i = 0; i < queries.length; i += BATCH_SIZE) {
+          const batch = queries.slice(i, i + BATCH_SIZE);
+          const batchResults = await Promise.allSettled(
+            batch.map(async (query) => {
+              try {
+                await searchRequest(query, 25, env, ctx);
+                log('debug', 'Cache warmed for query', { query });
+                return { query, success: true };
+              } catch (error) {
+                log('warn', 'Cache warming failed for query', {
+                  query,
+                  error: error instanceof Error ? error.message : 'Unknown error',
+                });
+                return { query, success: false };
+              }
+            })
+          );
+
+          for (const r of batchResults) {
+            if (r.status === 'fulfilled') results.push(r.value);
+          }
+
+          // Pause between batches — be a polite API consumer
+          if (i + BATCH_SIZE < queries.length) {
+            await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+          }
+        }
+
+        const successCount = results.filter((r) => r.success).length;
         const duration = Date.now() - startTime;
 
         log('info', 'Cache warming completed', {
           duration,
           totalQueries: queries.length,
           successCount,
-          failureCount,
+          failureCount: results.length - successCount,
         });
-      })
+      })()
     );
   },
 };
