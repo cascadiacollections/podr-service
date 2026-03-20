@@ -1727,7 +1727,7 @@ async function podcastDetailRequest(
   }
 
   const episodes = lookupResult.results
-    .filter((r) => r.wrapperType === 'track' && r.kind === 'podcast-episode')
+    .filter((r) => r.kind === 'podcast-episode')
     .map((ep) => ({
       trackId: ep.trackId,
       trackName: ep.trackName,
