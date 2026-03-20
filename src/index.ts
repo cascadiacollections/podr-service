@@ -2579,49 +2579,45 @@ export default {
       source: trendingQueries.length > 0 ? 'trending' : 'fallback',
     });
 
-    ctx.waitUntil(
-      (async () => {
-        const results: Array<{ query: string; success: boolean }> = [];
+    const results: Array<{ query: string; success: boolean }> = [];
 
-        // Process in batches to avoid thundering-herd on the iTunes API
-        for (let i = 0; i < queries.length; i += BATCH_SIZE) {
-          const batch = queries.slice(i, i + BATCH_SIZE);
-          const batchResults = await Promise.allSettled(
-            batch.map(async (query) => {
-              try {
-                await searchRequest(query, 25, env, ctx);
-                log('debug', 'Cache warmed for query', { query });
-                return { query, success: true };
-              } catch (error) {
-                log('warn', 'Cache warming failed for query', {
-                  query,
-                  error: error instanceof Error ? error.message : 'Unknown error',
-                });
-                return { query, success: false };
-              }
-            })
-          );
-
-          for (const r of batchResults) {
-            if (r.status === 'fulfilled') results.push(r.value);
+    // Process in batches to avoid thundering-herd on the iTunes API
+    for (let i = 0; i < queries.length; i += BATCH_SIZE) {
+      const batch = queries.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.allSettled(
+        batch.map(async (query) => {
+          try {
+            await searchRequest(query, 25, env, ctx);
+            log('debug', 'Cache warmed for query', { query });
+            return { query, success: true };
+          } catch (error) {
+            log('warn', 'Cache warming failed for query', {
+              query,
+              error: error instanceof Error ? error.message : 'Unknown error',
+            });
+            return { query, success: false };
           }
+        })
+      );
 
-          // Pause between batches — be a polite API consumer
-          if (i + BATCH_SIZE < queries.length) {
-            await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
-          }
-        }
+      for (const r of batchResults) {
+        if (r.status === 'fulfilled') results.push(r.value);
+      }
 
-        const successCount = results.filter((r) => r.success).length;
-        const duration = Date.now() - startTime;
+      // Pause between batches — be a polite API consumer
+      if (i + BATCH_SIZE < queries.length) {
+        await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+      }
+    }
 
-        log('info', 'Cache warming completed', {
-          duration,
-          totalQueries: queries.length,
-          successCount,
-          failureCount: results.length - successCount,
-        });
-      })()
-    );
+    const successCount = results.filter((r) => r.success).length;
+    const duration = Date.now() - startTime;
+
+    log('info', 'Cache warming completed', {
+      duration,
+      totalQueries: queries.length,
+      successCount,
+      failureCount: results.length - successCount,
+    });
   },
 };
