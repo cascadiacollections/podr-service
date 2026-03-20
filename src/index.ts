@@ -51,13 +51,6 @@ interface AnalyticsDataPoint {
 }
 
 /**
- * Analytics Engine binding
- */
-interface AnalyticsEngine {
-  writeDataPoint: (data: AnalyticsDataPoint) => void;
-}
-
-/**
  * Workers AI binding
  */
 interface Ai {
@@ -65,14 +58,6 @@ interface Ai {
     model: string,
     input: { messages: Array<{ role: string; content: string }> }
   ) => Promise<{ response?: string }>;
-}
-
-/**
- * KV namespace binding
- */
-interface KVNamespace {
-  get: (key: string, options?: { type?: 'text' | 'json' }) => Promise<string | null>;
-  put: (key: string, value: string, options?: { expirationTtl?: number }) => Promise<void>;
 }
 
 /**
@@ -106,40 +91,6 @@ interface D1Database {
   exec: (query: string) => Promise<D1Result<unknown>>;
 }
 
-/**
- * R2 bucket binding for analytics data lake
- */
-interface R2Bucket {
-  put: (
-    key: string,
-    value: string | ArrayBuffer | ReadableStream,
-    options?: { httpMetadata?: { contentType?: string }; customMetadata?: Record<string, string> }
-  ) => Promise<R2Object | null>;
-  get: (key: string) => Promise<R2ObjectBody | null>;
-  list: (options?: { prefix?: string; limit?: number; cursor?: string }) => Promise<R2Objects>;
-  head: (key: string) => Promise<R2Object | null>;
-}
-
-interface R2Object {
-  key: string;
-  size: number;
-  etag: string;
-  uploaded: Date;
-  httpMetadata?: { contentType?: string };
-  customMetadata?: Record<string, string>;
-}
-
-interface R2ObjectBody extends R2Object {
-  body: ReadableStream;
-  text: () => Promise<string>;
-  json: <T>() => Promise<T>;
-}
-
-interface R2Objects {
-  objects: R2Object[];
-  truncated: boolean;
-  cursor?: string;
-}
 
 /**
  * Analytics event for R2 export (data lake)
