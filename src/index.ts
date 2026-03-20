@@ -42,15 +42,6 @@ interface LogContext {
 }
 
 /**
- * Analytics Engine data point
- */
-interface AnalyticsDataPoint {
-  blobs?: string[];
-  doubles?: number[];
-  indexes?: string[];
-}
-
-/**
  * Workers AI binding
  */
 interface Ai {
@@ -90,7 +81,6 @@ interface D1Database {
   prepare: (query: string) => D1PreparedStatement;
   exec: (query: string) => Promise<D1Result<unknown>>;
 }
-
 
 /**
  * Analytics event for R2 export (data lake)
