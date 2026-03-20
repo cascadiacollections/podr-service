@@ -283,6 +283,7 @@ const CACHE_TTL_SCHEMA = 31536000 as const; // 1 year - schema only changes on r
 const CACHE_STALE_TOLERANCE = 86400 as const; // 24 hours stale tolerance for SWR
 const CACHE_TTL_SEMANTIC_SEARCH = 3600 as const; // 1 hour for semantic search results
 const CACHE_TTL_RELATED = 14400 as const; // 4 hours for related podcasts (similar to detail)
+// AI-generated summaries are cached indefinitely — podcast descriptions rarely change
 
 /**
  * Related podcasts limit configuration
@@ -421,12 +422,12 @@ const MAX_SUMMARY_LENGTH = 200 as const;
 /**
  * Maximum input description length for AI summarization (prevents context overflow and reduces costs)
  */
-const MAX_DESCRIPTION_LENGTH = 5000 as const;
+const MAX_DESCRIPTION_LENGTH = 1500 as const;
 
 /**
  * Workers AI model for text generation
  */
-const AI_MODEL = '@cf/meta/llama-2-7b-chat-int8' as const;
+const AI_MODEL = '@cf/meta/llama-3.2-1b-instruct' as const;
 
 /**
  * Timeout for AI summary generation (in milliseconds)
@@ -520,7 +521,7 @@ async function cacheSummary(env: Env, podcastId: number, summary: string): Promi
 
   try {
     const cacheKey = getSummaryCacheKey(podcastId);
-    await env.FLAGS.put(cacheKey, summary, { expirationTtl: CACHE_TTL_SUMMARY });
+    await env.FLAGS.put(cacheKey, summary);
   } catch (error) {
     log('error', 'Failed to cache summary', {
       podcastId,
