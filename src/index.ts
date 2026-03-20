@@ -42,16 +42,6 @@ interface LogContext {
 }
 
 /**
- * Workers AI binding
- */
-interface Ai {
-  run: (
-    model: string,
-    input: { messages: Array<{ role: string; content: string }> }
-  ) => Promise<{ response?: string }>;
-}
-
-/**
  * D1 database result types
  */
 interface D1Result<T> {
@@ -112,7 +102,6 @@ interface FeatureFlags {
   enhancedCaching: boolean;
   analyticsExport: boolean;
   podcastIndex: boolean;
-  podcastSummaries: boolean;
 }
 
 /**
@@ -124,7 +113,6 @@ const DEFAULT_FLAGS: FeatureFlags = {
   enhancedCaching: false,
   analyticsExport: false,
   podcastIndex: false,
-  podcastSummaries: false,
 };
 
 /**
@@ -135,7 +123,6 @@ const DEFAULT_FLAGS: FeatureFlags = {
 declare global {
   interface Env {
     DB?: D1Database;
-    AI?: Ai;
     PODCAST_INDEX_KEY?: string;
     PODCAST_INDEX_SECRET?: string;
     VECTORIZE?: Vectorize;
@@ -356,227 +343,47 @@ async function hashQuery(query: string): Promise<string> {
 }
 
 /**
- * Maximum length for AI-generated summaries
+ * Fetches the channel-level description from a podcast RSS feed.
+ * Prefers <itunes:summary> over <description>, both CDATA and plain text.
  */
-const MAX_SUMMARY_LENGTH = 200 as const;
-
-/**
- * Maximum input description length for AI summarization (prevents context overflow and reduces costs)
- */
-const MAX_DESCRIPTION_LENGTH = 1500 as const;
-
-/**
- * Workers AI model for text generation
- */
-const AI_MODEL = '@cf/meta/llama-3.2-1b-instruct' as const;
-
-/**
- * Timeout for AI summary generation (in milliseconds)
- */
-const AI_TIMEOUT_MS = 10000 as const;
-
-/**
- * Number of episode descriptions to use as fallback when podcast description is unavailable
- */
-const FALLBACK_EPISODE_COUNT = 3 as const;
-
-/**
- * Truncates text to the maximum length, preferring to end at a sentence boundary.
- *
- * @param text - The text to truncate
- * @param maxLength - Maximum allowed length
- * @returns Truncated text
- */
-function truncateToMaxLength(text: string, maxLength: number): string {
-  if (text.length <= maxLength) {
-    return text;
-  }
-  const truncated = text.substring(0, maxLength);
-  const lastPeriod = truncated.lastIndexOf('.');
-  return lastPeriod > 0 ? truncated.substring(0, lastPeriod + 1) : truncated + '...';
-}
-
-/**
- * Sanitizes input text for AI prompt to mitigate prompt injection attacks.
- * Removes potential instruction-like patterns and limits length.
- *
- * @param text - The text to sanitize
- * @param maxLength - Maximum allowed length
- * @returns Sanitized text
- */
-function sanitizeForAIPrompt(text: string, maxLength: number): string {
-  // Truncate to max length first
-  let sanitized = text.length > maxLength ? text.substring(0, maxLength) : text;
-
-  // Remove common prompt injection patterns
-  sanitized = sanitized
-    .replace(/ignore\s+(previous|all|above)\s+instructions?/gi, '')
-    .replace(/disregard\s+(previous|all|above)/gi, '')
-    .replace(/forget\s+(everything|all|previous)/gi, '')
-    .replace(/new\s+instructions?:/gi, '')
-    .replace(/system\s*:/gi, '')
-    .replace(/assistant\s*:/gi, '')
-    .replace(/user\s*:/gi, '');
-
-  return sanitized.trim();
-}
-
-/**
- * Generates KV cache key for podcast summary
- */
-function getSummaryCacheKey(podcastId: number): string {
-  return `summary:${podcastId}`;
-}
-
-/**
- * Retrieves a cached podcast summary from KV
- *
- * @param env - Environment bindings
- * @param podcastId - The iTunes podcast ID
- * @returns Cached summary or null if not found
- */
-async function getCachedSummary(env: Env, podcastId: number): Promise<string | null> {
-  if (!env.FLAGS) return null;
-
-  try {
-    const cacheKey = getSummaryCacheKey(podcastId);
-    return await env.FLAGS.get(cacheKey);
-  } catch (error) {
-    log('error', 'Failed to get cached summary', {
-      podcastId,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
-    return null;
-  }
-}
-
-/**
- * Caches a podcast summary in KV
- *
- * @param env - Environment bindings
- * @param podcastId - The iTunes podcast ID
- * @param summary - The summary to cache
- */
-async function cacheSummary(env: Env, podcastId: number, summary: string): Promise<void> {
-  if (!env.FLAGS) return;
-
-  try {
-    const cacheKey = getSummaryCacheKey(podcastId);
-    await env.FLAGS.put(cacheKey, summary);
-  } catch (error) {
-    log('error', 'Failed to cache summary', {
-      podcastId,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
-  }
-}
-
-/**
- * Generates an AI-powered summary for a podcast description
- *
- * @param env - Environment bindings
- * @param podcastName - The podcast name
- * @param description - The podcast description to summarize
- * @returns Generated summary or null if AI unavailable
- */
-async function generatePodcastSummary(
+async function getRssDescription(
+  feedUrl: string,
   env: Env,
-  podcastName: string,
-  description: string
-): Promise<string | null> {
-  if (!env.AI) {
-    log('warn', 'AI binding not available for summary generation');
-    return null;
-  }
-
-  // Skip if no description to summarize
-  if (!description || description.trim().length === 0) {
-    return null;
-  }
-
-  try {
-    // Sanitize inputs to mitigate prompt injection and limit length
-    const sanitizedName = sanitizeForAIPrompt(podcastName, 200);
-    const sanitizedDescription = sanitizeForAIPrompt(description, MAX_DESCRIPTION_LENGTH);
-
-    const prompt = `Summarize this podcast in 2-3 concise sentences (max ${MAX_SUMMARY_LENGTH} characters). Focus on what the podcast is about and who it's for. Do not include any preamble or phrases like "Here is a summary". Just provide the summary directly.
-
-Podcast: ${sanitizedName}
-Description: ${sanitizedDescription}
-
-Summary:`;
-
-    // Enforce timeout for AI request using Promise.race
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-    const aiPromise = env.AI.run(AI_MODEL, {
-      messages: [{ role: 'user', content: prompt }],
-    });
-
-    const timeoutPromise = new Promise<{ response?: string }>((_, reject) => {
-      timeoutId = setTimeout(() => reject(new Error('AI request timed out')), AI_TIMEOUT_MS);
-    });
-
-    let response: { response?: string };
-    try {
-      response = await Promise.race([aiPromise, timeoutPromise]);
-    } finally {
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId);
-      }
-    }
-
-    if (!response.response) {
-      log('warn', 'AI returned empty response for summary', { podcastName: sanitizedName });
-      return null;
-    }
-
-    // Trim and limit the summary length
-    const summary = truncateToMaxLength(response.response.trim(), MAX_SUMMARY_LENGTH);
-
-    return summary;
-  } catch (error) {
-    log('error', 'Failed to generate podcast summary', {
-      podcastName,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    });
-    return null;
-  }
-}
-
-/**
- * Gets or generates a podcast summary
- * First checks KV cache, then generates via AI if not cached
- *
- * @param env - Environment bindings
- * @param podcastId - The iTunes podcast ID
- * @param podcastName - The podcast name
- * @param description - The podcast description
- * @param ctx - Execution context for background tasks
- * @returns Summary string or null if unavailable
- */
-async function getPodcastSummary(
-  env: Env,
-  podcastId: number,
-  podcastName: string,
-  description: string,
   ctx?: ExecutionContext
 ): Promise<string | null> {
-  // Check cache first
-  const cachedSummary = await getCachedSummary(env, podcastId);
-  if (cachedSummary) {
-    log('info', 'Summary cache hit', { podcastId });
-    return cachedSummary;
-  }
+  try {
+    const { response } = await cachedFetchViaProxy(feedUrl, CACHE_TTL_PODCAST_DETAIL, env, ctx);
+    if (!response.ok || !response.body) return null;
 
-  // Generate new summary
-  const summary = await generatePodcastSummary(env, podcastName, description);
-  if (summary && ctx) {
-    // Cache in background
-    ctx.waitUntil(cacheSummary(env, podcastId, summary));
-  }
+    // Stream the feed and stop as soon as we pass the channel header.
+    // RSS feeds can be large; we only need content before the first <item>.
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let channelXml = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        channelXml += decoder.decode(value, { stream: true });
+        if (channelXml.includes('<item>')) {
+          channelXml = channelXml.split('<item>')[0];
+          break;
+        }
+      }
+    } finally {
+      await reader.cancel();
+    }
 
-  return summary;
+    const summary =
+      /<itunes:summary><!\[CDATA\[([\s\S]*?)\]\]><\/itunes:summary>/.exec(channelXml)?.[1] ||
+      /<itunes:summary>([\s\S]*?)<\/itunes:summary>/.exec(channelXml)?.[1] ||
+      /<description><!\[CDATA\[([\s\S]*?)\]\]><\/description>/.exec(channelXml)?.[1] ||
+      /<description>([\s\S]*?)<\/description>/.exec(channelXml)?.[1] ||
+      null;
+    return summary ? summary.trim().slice(0, 500) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1450,21 +1257,25 @@ async function searchRequest(
   }
 
   recordSuccess();
-  const data = await response.json();
 
-  // Cache the response
-  const responseToCache = new Response(JSON.stringify(data), {
+  // Clone the response body into the cache without parsing it first.
+  // The original body stream is consumed separately below.
+  const forCache = response.clone();
+  const cacheEntry = new Response(forCache.body, {
+    status: forCache.status,
+    statusText: forCache.statusText,
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': `public, max-age=${CACHE_TTL_SEARCH}`,
     },
   });
   if (ctx) {
-    ctx.waitUntil(cache.put(cacheKey, responseToCache));
+    ctx.waitUntil(cache.put(cacheKey, cacheEntry));
   } else {
-    await cache.put(cacheKey, responseToCache);
+    await cache.put(cacheKey, cacheEntry);
   }
 
+  const data = await response.json();
   return { data, cacheHit: false };
 }
 
@@ -1540,21 +1351,22 @@ async function topRequest(
 
   recordSuccess();
 
-  const data = await response.json();
-
-  // Cache the response
-  const responseToCache = new Response(JSON.stringify(data), {
+  const forCache = response.clone();
+  const cacheEntry = new Response(forCache.body, {
+    status: forCache.status,
+    statusText: forCache.statusText,
     headers: {
       'Content-Type': 'application/json',
       'Cache-Control': `public, max-age=${CACHE_TTL_TOP}`,
     },
   });
   if (ctx) {
-    ctx.waitUntil(cache.put(cacheKey, responseToCache));
+    ctx.waitUntil(cache.put(cacheKey, cacheEntry));
   } else {
-    await cache.put(cacheKey, responseToCache);
+    await cache.put(cacheKey, cacheEntry);
   }
 
+  const data = await response.json();
   return { data, cacheHit: false };
 }
 
@@ -1582,8 +1394,9 @@ async function revalidateTopPodcastsCache(
 
     if (response.ok) {
       recordSuccess();
-      const data = await response.json();
-      const cachedResponse = new Response(JSON.stringify(data), {
+      const cachedResponse = new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
         headers: {
           'Content-Type': 'application/json',
           'Cache-Control': `public, max-age=${CACHE_TTL_TOP}`,
@@ -1747,31 +1560,12 @@ async function podcastDetailRequest(
     episodes,
   };
 
-  // Generate summary if requested and feature flagged
+  // Fetch RSS description if requested and feature flagged
   if (includeSummary) {
     const summaryEnabled = await getFlag(env, 'podcastSummaries');
-    if (summaryEnabled) {
-      // Use podcast description or concatenate episode descriptions as fallback
-      const podcastDescription =
-        podcastData.description ||
-        episodes
-          .slice(0, FALLBACK_EPISODE_COUNT)
-          .map((ep) => ep.description)
-          .filter(Boolean)
-          .join(' ');
-
-      if (podcastDescription) {
-        const summary = await getPodcastSummary(
-          env,
-          podcastData.trackId,
-          podcastData.trackName,
-          podcastDescription,
-          ctx
-        );
-        if (summary) {
-          podcastResponse.summary = summary;
-        }
-      }
+    if (summaryEnabled && podcastData.feedUrl) {
+      const description = await getRssDescription(podcastData.feedUrl, env, ctx);
+      if (description) podcastResponse.summary = description;
     }
   }
 
@@ -1907,7 +1701,7 @@ function handleHealthCheck(request: Request): Response {
 async function handleDeepHealthCheck(request: Request, env: Env): Promise<Response> {
   const startTime = Date.now();
   let upstreamOk = false;
-  let upstreamLatency = 0;
+  let upstreamLatency: number;
 
   try {
     const testUrl = `${HOSTNAME}/search?media=podcast&term=test&limit=1`;
@@ -2415,7 +2209,7 @@ function getApiSchema(): OpenAPIV3.Document {
         get: {
           summary: 'Podcast Detail',
           description:
-            'Returns detailed information about a specific podcast including recent episodes. Optionally includes an AI-generated summary when the summary query parameter is set to true.',
+            'Returns detailed information about a specific podcast including recent episodes. Optionally includes the podcast description from the RSS feed when the summary query parameter is set to true.',
           operationId: 'podcastDetail',
           parameters: [
             {
@@ -2432,7 +2226,7 @@ function getApiSchema(): OpenAPIV3.Document {
               name: 'summary',
               in: 'query',
               description:
-                'When set to true, includes an AI-generated summary of the podcast (feature-flagged)',
+                'When set to true, includes the podcast description from the RSS feed (feature-flagged)',
               required: false,
               schema: {
                 type: 'string',
@@ -2487,8 +2281,8 @@ function getApiSchema(): OpenAPIV3.Document {
                       summary: {
                         type: 'string',
                         description:
-                          'AI-generated summary of the podcast (only included when summary=true and feature is enabled)',
-                        maxLength: 200,
+                          'Podcast description from the RSS feed (only included when summary=true and feature is enabled)',
+                        maxLength: 500,
                       },
                     },
                   },
@@ -2611,6 +2405,9 @@ function getApiSchema(): OpenAPIV3.Document {
     },
   };
 }
+
+// Serialized once per isolate lifetime; schema only changes on deployment.
+const API_SCHEMA_JSON = JSON.stringify(getApiSchema(), null, 2);
 
 /**
  * Creates an error response with appropriate headers
@@ -2994,7 +2791,7 @@ export default {
         const duration = Date.now() - startTime;
         log('info', 'Schema request', { requestId, path: pathname, duration });
         trackMetrics(env, 'schema', true, 200, duration, colo);
-        return new Response(JSON.stringify(getApiSchema(), null, 2), {
+        return new Response(API_SCHEMA_JSON, {
           headers: {
             'content-type': 'application/json;charset=UTF-8',
             'Access-Control-Allow-Origin': '*',
