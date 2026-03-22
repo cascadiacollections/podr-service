@@ -41,6 +41,7 @@
   "packageManager": "yarn@4.10.3",
   "resolutions": {
     "js-yaml": "^4.1.1",
-    "minimatch": "^10.2.3"
+    "minimatch": "^10.2.3",
+    "@babel/helpers": "^7.26.10"
   }
 }
