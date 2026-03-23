@@ -36,7 +36,7 @@
   },
   "dependencies": {
     "@cloudflare/containers": "^0.1.1",
-    "wrangler": "^4.75.0"
+    "wrangler": "^4.76.0"
   },
   "packageManager": "yarn@4.10.3",
   "resolutions": {
