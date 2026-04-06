@@ -19,7 +19,7 @@
   "author": "Kevin T. Coughlin",
   "license": "MIT",
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20260329.1",
+    "@cloudflare/workers-types": "4.20260405.1",
     "@eslint/js": "^10.0.1",
     "@types/jest": "30.0.0",
     "@typescript-eslint/eslint-plugin": "8.57.2",
@@ -35,8 +35,8 @@
     "typescript-eslint": "^8.57.2"
   },
   "dependencies": {
-    "@cloudflare/containers": "^0.2.0",
-    "wrangler": "^4.78.0"
+    "@cloudflare/containers": "^0.2.2",
+    "wrangler": "^4.80.0"
   },
   "packageManager": "yarn@4.10.3",
   "resolutions": {
