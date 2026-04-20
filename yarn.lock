@@ -626,7 +626,7 @@ __metadata:
   resolution: "@cascadiacollections/podr-service@workspace:."
   dependencies:
     "@cloudflare/containers": "npm:^0.3.2"
-    "@cloudflare/workers-types": "npm:4.20260416.2"
+    "@cloudflare/workers-types": "npm:4.20260420.1"
     "@eslint/js": "npm:^10.0.1"
     "@types/jest": "npm:30.0.0"
     "@typescript-eslint/eslint-plugin": "npm:8.58.1"
@@ -706,10 +706,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@cloudflare/workers-types@npm:4.20260416.2":
-  version: 4.20260416.2
-  resolution: "@cloudflare/workers-types@npm:4.20260416.2"
-  checksum: 10c0/c96eccab6eb887cfa067089e2797ddfc010b4a0cdf8b719365e0a68d993db106204711cc3c4f7786994f7893aebf82c2e9818e7715de95fc5aca2401ec8687ee
+"@cloudflare/workers-types@npm:4.20260420.1":
+  version: 4.20260420.1
+  resolution: "@cloudflare/workers-types@npm:4.20260420.1"
+  checksum: 10c0/c2dc4d37897c7bedfd4b6f6f06e3b4c14e98dc6caf7841d01d3056c03c39c8ef2ed5a84fd917933f76135d0ff2a199bba857c431fcbdfb073c149c41e96b11a1
   languageName: node
   linkType: hard
 
