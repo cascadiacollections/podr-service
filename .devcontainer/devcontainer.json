@@ -32,7 +32,8 @@
         "editor.codeActionsOnSave": {
           "source.fixAll.eslint": "explicit"
         },
-        "js/ts.preferences.importModuleSpecifier": "relative"
+        "javascript.preferences.importModuleSpecifier": "relative",
+        "typescript.preferences.importModuleSpecifier": "relative"
       }
     }
   },
