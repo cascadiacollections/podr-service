@@ -1,7 +1,8 @@
 {
   "name": "Podr Service Development",
-  "image": "mcr.microsoft.com/devcontainers/javascript-node:24",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:24-bookworm",
   "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {},
     "ghcr.io/devcontainers/features/github-cli:1": {},
     "ghcr.io/devcontainers/features/git:1": {},
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},
@@ -22,11 +23,16 @@
         "ms-azuretools.vscode-docker",
         "redhat.vscode-yaml",
         "ms-vscode.vscode-json",
-        "cloudflare.cloudflare-workers-bindings-extension"
+        "cloudflare.cloudflare-workers-bindings-extension",
+        "github.vscode-pull-request-github"
       ],
       "settings": {
         "editor.defaultFormatter": "esbenp.prettier-vscode",
         "editor.formatOnSave": true,
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "javascript.preferences.importModuleSpecifier": "relative",
         "typescript.preferences.importModuleSpecifier": "relative"
       }
     }
