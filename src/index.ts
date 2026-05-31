@@ -2301,10 +2301,10 @@ function getApiSchema(): OpenAPIV3.Document {
               },
               headers: {
                 'Cache-Control': {
-                  description: 'Cache duration: 1 hour',
+                  description: 'Cache duration: 4 hours',
                   schema: {
                     type: 'string',
-                    example: 'public, max-age=3600',
+                    example: 'public, max-age=14400',
                   },
                 },
                 'X-Cache': {
