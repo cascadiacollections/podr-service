@@ -508,6 +508,28 @@ describe('Podr Service Worker', () => {
 
       expect(response.status).toBe(200);
     });
+
+    test('should rate limit podcast detail requests', async () => {
+      const request = new Request('http://localhost:8787/podcast/1535809341', { method: 'GET' });
+
+      mockEnv.RATE_LIMITER.limit.mockImplementation(() => Promise.resolve({ success: false }));
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(429);
+      expect(response.statusText).toBe('Too Many Requests');
+    });
+
+    test('should rate limit related podcast requests', async () => {
+      const request = new Request('http://localhost:8787/related?id=1535809341', { method: 'GET' });
+
+      mockEnv.RATE_LIMITER.limit.mockImplementation(() => Promise.resolve({ success: false }));
+
+      const response = await worker.fetch(request, mockEnv, mockCtx);
+
+      expect(response.status).toBe(429);
+      expect(response.statusText).toBe('Too Many Requests');
+    });
   });
 
   describe('security headers', () => {
@@ -1695,7 +1717,7 @@ describe('Podr Service Worker', () => {
       expect(response.status).toBe(400);
     });
 
-    test('should cache podcast detail response for 1 hour', async () => {
+    test('should cache podcast detail response for 4 hours', async () => {
       const url = 'http://localhost:8787/podcast/1535809341';
       const request = new Request(url, { method: 'GET' });
 

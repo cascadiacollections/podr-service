@@ -102,6 +102,7 @@ interface FeatureFlags {
   enhancedCaching: boolean;
   analyticsExport: boolean;
   podcastIndex: boolean;
+  podcastSummaries: boolean;
 }
 
 /**
@@ -113,6 +114,7 @@ const DEFAULT_FLAGS: FeatureFlags = {
   enhancedCaching: false,
   analyticsExport: false,
   podcastIndex: false,
+  podcastSummaries: false,
 };
 
 /**
@@ -1866,7 +1868,7 @@ function getApiSchema(): OpenAPIV3.Document {
               headers: {
                 'Cache-Control': {
                   description:
-                    'Cache duration: indefinitely (immutable) for schema, 1 hour for search, 30 minutes for top podcasts',
+                    'Cache duration: 1 year (immutable) for schema, 24 hours for search, 2 hours for top podcasts',
                   schema: {
                     type: 'string',
                     example: 'public, max-age=31536000, immutable',
@@ -2017,6 +2019,9 @@ function getApiSchema(): OpenAPIV3.Document {
             '404': {
               description: 'Feature not enabled',
             },
+            '429': {
+              description: 'Rate limit exceeded',
+            },
           },
         },
       },
@@ -2088,6 +2093,9 @@ function getApiSchema(): OpenAPIV3.Document {
             },
             '404': {
               description: 'Feature not enabled',
+            },
+            '429': {
+              description: 'Rate limit exceeded',
             },
           },
         },
@@ -2181,10 +2189,10 @@ function getApiSchema(): OpenAPIV3.Document {
               },
               headers: {
                 'Cache-Control': {
-                  description: 'Cache duration: 1 hour',
+                  description: 'Cache duration: 4 hours',
                   schema: {
                     type: 'string',
-                    example: 'public, max-age=3600',
+                    example: 'public, max-age=14400',
                   },
                 },
                 'X-Cache': {
@@ -2201,6 +2209,9 @@ function getApiSchema(): OpenAPIV3.Document {
             },
             '404': {
               description: 'Feature not enabled',
+            },
+            '429': {
+              description: 'Rate limit exceeded',
             },
           },
         },
@@ -2290,10 +2301,10 @@ function getApiSchema(): OpenAPIV3.Document {
               },
               headers: {
                 'Cache-Control': {
-                  description: 'Cache duration: 1 hour',
+                  description: 'Cache duration: 4 hours',
                   schema: {
                     type: 'string',
-                    example: 'public, max-age=3600',
+                    example: 'public, max-age=14400',
                   },
                 },
                 'X-Cache': {
@@ -2310,6 +2321,9 @@ function getApiSchema(): OpenAPIV3.Document {
             },
             '404': {
               description: 'Podcast not found',
+            },
+            '429': {
+              description: 'Rate limit exceeded',
             },
           },
         },
@@ -2398,6 +2412,9 @@ function getApiSchema(): OpenAPIV3.Document {
             },
             '400': {
               description: 'Missing or invalid id parameter',
+            },
+            '429': {
+              description: 'Rate limit exceeded',
             },
           },
         },
@@ -2498,6 +2515,16 @@ export default {
       }
       if (pathname === '/health/deep') {
         return await handleDeepHealthCheck(request, env);
+      }
+
+      // Rate limiting (if binding available)
+      if (env.RATE_LIMITER) {
+        const clientIP = getClientIP(request);
+        const { success } = await env.RATE_LIMITER.limit({ key: clientIP });
+        if (!success) {
+          log('warn', 'Rate limit exceeded', { requestId, clientIP });
+          return createErrorResponse('Rate limit exceeded', 429, 'Too Many Requests');
+        }
       }
 
       // Trending queries endpoint (feature flagged)
@@ -2774,16 +2801,6 @@ export default {
         }
 
         return handleRequest(() => Promise.resolve(data), CACHE_TTL_PODCAST_DETAIL, cacheHit);
-      }
-
-      // Rate limiting (if binding available)
-      if (env.RATE_LIMITER) {
-        const clientIP = getClientIP(request);
-        const { success } = await env.RATE_LIMITER.limit({ key: clientIP });
-        if (!success) {
-          log('warn', 'Rate limit exceeded', { requestId, clientIP });
-          return createErrorResponse('Rate limit exceeded', 429, 'Too Many Requests');
-        }
       }
 
       // Serve API schema at root path when no query params

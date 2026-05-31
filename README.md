@@ -115,6 +115,8 @@ Controlled via KV namespace `FLAGS`:
 | Flag              | Description                             | Default |
 | ----------------- | --------------------------------------- | ------- |
 | `trendingQueries` | Enable /trending and /suggest endpoints | false   |
+| `semanticSearch`  | Enable /semantic-search endpoint        | false   |
+| `podcastSummaries` | Enable RSS summaries on /podcast       | false   |
 | `podcastIndex`    | Use Podcast Index API instead of iTunes | false   |
 | `analyticsExport` | Export events to R2 data lake           | false   |
 
