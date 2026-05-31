@@ -2019,6 +2019,9 @@ function getApiSchema(): OpenAPIV3.Document {
             '404': {
               description: 'Feature not enabled',
             },
+            '429': {
+              description: 'Rate limit exceeded',
+            },
           },
         },
       },
@@ -2090,6 +2093,9 @@ function getApiSchema(): OpenAPIV3.Document {
             },
             '404': {
               description: 'Feature not enabled',
+            },
+            '429': {
+              description: 'Rate limit exceeded',
             },
           },
         },
@@ -2204,6 +2210,9 @@ function getApiSchema(): OpenAPIV3.Document {
             '404': {
               description: 'Feature not enabled',
             },
+            '429': {
+              description: 'Rate limit exceeded',
+            },
           },
         },
       },
@@ -2313,6 +2322,9 @@ function getApiSchema(): OpenAPIV3.Document {
             '404': {
               description: 'Podcast not found',
             },
+            '429': {
+              description: 'Rate limit exceeded',
+            },
           },
         },
       },
@@ -2400,6 +2412,9 @@ function getApiSchema(): OpenAPIV3.Document {
             },
             '400': {
               description: 'Missing or invalid id parameter',
+            },
+            '429': {
+              description: 'Rate limit exceeded',
             },
           },
         },
