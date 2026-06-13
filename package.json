@@ -6,7 +6,7 @@
   "type": "module",
   "packageManager": "bun@1.3.14",
   "scripts": {
-    "build": "wrangler deploy --dry-run --outdir=dist",
+    "build": "wrangler deploy --dry-run --outdir=dist --containers-rollout=none",
     "types": "wrangler types",
     "lint": "eslint ./src ./__tests__",
     "lint:fix": "eslint ./src ./__tests__ --fix",
