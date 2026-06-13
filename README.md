@@ -1,6 +1,6 @@
 # Podr's RESTful API
 
-[![Node.js CI](https://github.com/cascadiacollections/podr-service/actions/workflows/node.js.yml/badge.svg)](https://github.com/cascadiacollections/podr-service/actions/workflows/node.js.yml)
+[![CI](https://github.com/cascadiacollections/podr-service/actions/workflows/node.js.yml/badge.svg)](https://github.com/cascadiacollections/podr-service/actions/workflows/node.js.yml)
 
 This project contains the RESTful API implementation for https://www.podrapp.com/.
 
@@ -112,13 +112,13 @@ GET /    # Returns OpenAPI 3.0 schema (when no query params)
 
 Controlled via KV namespace `FLAGS`:
 
-| Flag              | Description                             | Default |
-| ----------------- | --------------------------------------- | ------- |
-| `trendingQueries` | Enable /trending and /suggest endpoints | false   |
-| `semanticSearch`  | Enable /semantic-search endpoint        | false   |
-| `podcastSummaries` | Enable RSS summaries on /podcast       | false   |
-| `podcastIndex`    | Use Podcast Index API instead of iTunes | false   |
-| `analyticsExport` | Export events to R2 data lake           | false   |
+| Flag               | Description                             | Default |
+| ------------------ | --------------------------------------- | ------- |
+| `trendingQueries`  | Enable /trending and /suggest endpoints | false   |
+| `semanticSearch`   | Enable /semantic-search endpoint        | false   |
+| `podcastSummaries` | Enable RSS summaries on /podcast        | false   |
+| `podcastIndex`     | Use Podcast Index API instead of iTunes | false   |
+| `analyticsExport`  | Export events to R2 data lake           | false   |
 
 Set flags: `wrangler kv:key put --binding FLAGS "flag:trendingQueries" "true"`
 
@@ -127,38 +127,38 @@ Set flags: `wrangler kv:key put --binding FLAGS "flag:trendingQueries" "true"`
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) (see package.json for supported versions)
-- [Yarn](https://yarnpkg.com/)
+- [Bun](https://bun.sh/)
 
 ### Setup
 
 ```bash
 # Install dependencies
-yarn install
+bun install
 
 # Run development server
-yarn dev
+bun run dev
 
 # Build for production
-yarn build
+bun run build
 ```
 
 ### Testing and Linting
 
 ```bash
 # Run tests
-yarn test
+bun run test
 
 # Watch mode for tests
-yarn test:watch
+bun run test:watch
 
 # Lint code
-yarn lint
+bun run lint
 
 # Fix linting issues
-yarn lint:fix
+bun run lint:fix
 
 # Format code
-yarn format
+bun run format
 ```
 
 ### Dev Container
@@ -194,7 +194,7 @@ You can also deploy manually from your local machine:
 
 ```bash
 # Deploy to Cloudflare Workers
-yarn deploy
+bun run deploy
 ```
 
 Note: Manual deployment requires Wrangler authentication via `wrangler login` or environment variables.
