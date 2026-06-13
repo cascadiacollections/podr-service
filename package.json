@@ -35,7 +35,7 @@
     "@cloudflare/containers": "^0.3.7",
     "wrangler": "^4.98.0"
   },
-  "resolutions": {
+  "overrides": {
     "js-yaml": "^4.1.1",
     "minimatch": "^10.2.3",
     "@babel/helpers": "^7.26.10"

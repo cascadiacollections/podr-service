@@ -1,5 +1,6 @@
-import { describe, test, expect, jest, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, jest, beforeEach, beforeAll, mock } from 'bun:test';
 
+// Global module mock is intentional for bun:test, so src/index.ts can import safely in all tests.
 mock.module('@cloudflare/containers', () => ({
   Container: class {
     defaultPort = 8080;
@@ -7,7 +8,13 @@ mock.module('@cloudflare/containers', () => ({
   },
 }));
 
-const { default: worker } = await import('../src/index');
+type WorkerModule = typeof import('../src/index');
+let worker: WorkerModule['default'];
+
+beforeAll(async () => {
+  const module = await import('../src/index');
+  worker = module.default;
+});
 
 /** Helper type for assigning to global.caches in tests */
 type GlobalWithCaches = typeof globalThis & { caches: CacheStorage };
@@ -2356,9 +2363,9 @@ describe('Podr Service Worker', () => {
       );
 
       // Should not throw when D1 is not available
-      await expect(
-        worker.scheduled(mockScheduledEvent, mockEnvNoD1, mockCtx)
-      ).resolves.toBeUndefined();
+      await expect(worker.scheduled(mockScheduledEvent, mockEnvNoD1, mockCtx)).resolves.toBe(
+        undefined
+      );
     });
 
     test('should handle cache warming failures gracefully', async () => {
@@ -2386,9 +2393,9 @@ describe('Podr Service Worker', () => {
       };
 
       // Should not throw even if individual queries fail
-      await expect(
-        worker.scheduled(mockScheduledEvent, mockEnvWithD1, mockCtx)
-      ).resolves.toBeUndefined();
+      await expect(worker.scheduled(mockScheduledEvent, mockEnvWithD1, mockCtx)).resolves.toBe(
+        undefined
+      );
     });
 
     test('should warm cache for top 10 queries when available', async () => {
