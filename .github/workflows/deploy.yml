@@ -45,6 +45,7 @@ jobs:
           src
           package.json
           bun.lock
+          bunfig.toml
           tsconfig.json
           wrangler.jsonc
           Dockerfile
