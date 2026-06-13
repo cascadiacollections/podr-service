@@ -19,7 +19,7 @@
   "author": "Kevin T. Coughlin",
   "license": "MIT",
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20260608.1",
+    "@cloudflare/workers-types": "4.20260613.1",
     "@eslint/js": "^10.0.1",
     "@typescript-eslint/eslint-plugin": "8.60.1",
     "@typescript-eslint/parser": "8.60.1",
