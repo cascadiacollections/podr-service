@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: '24'
+  BUN_VERSION: '1.3.14'
 
 # Cancel in-progress runs when new commits are pushed
 concurrency:
@@ -28,7 +28,7 @@ concurrency:
 # - Concurrency cancels superseded runs
 # - timeout-minutes caps runaway jobs
 # - Sparse checkout reduces clone time
-# - yarn cache via setup-node
+# - bun cache via setup-bun
 
 jobs:
   ci:
@@ -42,36 +42,29 @@ jobs:
         sparse-checkout: |
           src
           __tests__
-          __mocks__
           package.json
-          yarn.lock
+          bun.lock
+          bunfig.toml
           tsconfig.json
           worker-configuration.d.ts
-          jest.config.js
           eslint.config.js
           .prettierrc
           .prettierignore
-          .yarn
-          .yarnrc.yml
         sparse-checkout-cone-mode: false
 
-    - name: Enable Corepack
-      run: corepack enable
-
-    - name: Setup Node.js
-      uses: actions/setup-node@v6
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
       with:
-        node-version: ${{ env.NODE_VERSION }}
-        cache: 'yarn'
+        bun-version: ${{ env.BUN_VERSION }}
 
     - name: Install dependencies
-      run: yarn install --immutable
+      run: bun install --frozen-lockfile
 
     - name: Lint and test
       run: |
-        yarn lint
-        yarn format:check
-        yarn test
+        bun run lint
+        bun run format:check
+        bun run test
 
     - name: Dependency review
       uses: actions/dependency-review-action@v5
