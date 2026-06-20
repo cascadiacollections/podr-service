@@ -1,215 +1,109 @@
-# Podr's RESTful API
+# podr-service
 
-[![CI](https://github.com/cascadiacollections/podr-service/actions/workflows/node.js.yml/badge.svg)](https://github.com/cascadiacollections/podr-service/actions/workflows/node.js.yml)
+Bun-based metadata, discovery, and feed-indexing API for the
+[cascadiacollections](https://github.com/cascadiacollections) Rust-native
+Android podcast/radio app.
 
-This project contains the RESTful API implementation for https://www.podrapp.com/.
+The Android client owns audio: the on-device engine (Symphonia + Oboe) does
+all decoding, ICY parsing, and playback. This service handles only the
+non-audio control plane — search, RSS parsing, history, and subscriptions.
 
-## Architecture
+## What this service does **not** do
 
-```
-                                    +------------------+
-                                    |   Cloudflare     |
-                                    |   Edge Cache     |
-                                    +--------+---------+
-                                             |
-+----------+    +-------------------+        |        +------------------+
-|  Client  +--->|  Cloudflare Worker|--------+------->|  iTunes API      |
-+----------+    |  (podr-service)   |                 |  (via Container) |
-                +--------+----------+                 +------------------+
-                         |
-         +---------------+---------------+
-         |               |               |
-+--------v----+  +-------v------+  +-----v--------+
-|  KV Flags   |  |  R2 Data Lake|  | Analytics    |
-| (features)  |  | (events)     |  | Engine       |
-+-------------+  +--------------+  +--------------+
-```
+- It does **not** proxy audio streams.
+- It does **not** parse ICY in-stream metadata. The Rust audio engine does that on-device.
+- It does **not** transcode or re-encode audio.
+- It does **not** manage playback state.
 
-### Key Components
+## Canonical response shape — `MediaItem`
 
-- **Cloudflare Workers Container**: Proxies all iTunes API calls to avoid Apple IP blocking
-- **Edge Caching**: Stale-while-revalidate pattern with configurable TTLs
-- **Circuit Breaker**: Fault tolerance with automatic recovery
-- **Rate Limiting**: 100 requests per 60 seconds per client IP
-- **R2 Data Lake**: Event streaming for batch analytics
-- **KV Feature Flags**: Runtime feature toggles
-- **Analytics Engine**: Real-time metrics and observability
+Every endpoint that returns playable content emits this exact shape (consumed
+by the Android client via UniFFI → Kotlin):
 
-## API Endpoints
-
-Base URL: `https://podr-service.cascadiacollections.workers.dev`
-
-### Podcast Search
-
-```
-GET /?q=<search_term>&limit=<optional>
+```ts
+{
+  uri:         string                              // direct stream or episode URL
+  title?:      string
+  artist?:     string                              // podcast name or station name
+  artwork_url?: string
+  media_type:  "Stream" | "Podcast" | "LocalFile"
+}
 ```
 
-- `q` (required): Search term (max 200 characters)
-- `limit` (optional): Number of results, 1-200, default 15
+See [`src/types.ts`](./src/types.ts) for the source of truth.
 
-Example: `/?q=javascript&limit=20`
+## Endpoints
 
-### Top Podcasts
+| Method | Path                                  | Returns                                                    |
+| ------ | ------------------------------------- | ---------------------------------------------------------- |
+| GET    | `/health`                             | `{ "status": "ok" }`                                       |
+| GET    | `/stations/search?q=&genre=&country=` | `MediaItem[]` (proxied from radio-browser.info)            |
+| GET    | `/stations/:uuid`                     | Single `MediaItem` with resolved, ICY-param-stripped URI   |
+| GET    | `/feed/:url`                          | `{ title, artwork_url, episodes: MediaItem[] }`            |
+| GET    | `/feed/:url/episodes/:guid`           | Single Podcast `MediaItem`                                 |
+| GET    | `/history`                            | `HistoryRow[]`                                             |
+| POST   | `/history`                            | upsert on `uri`; increments `count`, updates `last_played` |
+| GET    | `/subscriptions`                      | `SubscriptionRow[]`                                        |
+| POST   | `/subscriptions`                      | upsert subscription                                        |
+| DELETE | `/subscriptions/:uri`                 | remove subscription                                        |
 
-```
-GET /?q=toppodcasts&limit=<optional>&genre=<optional>
-```
+`:url` and the `DELETE /subscriptions/:uri` path param are **base64url-encoded**
+(`+→-`, `/→_`, no padding). `:guid` is `encodeURIComponent`-escaped.
 
-- `q=toppodcasts` (required): Reserved parameter for top podcasts
-- `limit` (optional): Number of results, 1-200, default 15
-- `genre` (optional): iTunes genre ID (e.g., 1312 for Technology)
+`POST /history` body: `{ "uri": string, "title"?: string }`
+`POST /subscriptions` body: `{ "uri": string, "title"?: string, "artwork_url"?: string }`
 
-Example: `/?q=toppodcasts&limit=25&genre=1312`
+## Storage
 
-**Genre IDs**: 1301 (Arts), 1302 (Comedy), 1303 (Education), 1304 (Kids & Family), 1305 (Health & Fitness), 1306 (TV & Film), 1307 (Music), 1308 (News), 1309 (Religion & Spirituality), 1310 (Science), 1311 (Sports), 1312 (Technology), 1313 (Business), 1314 (Society & Culture), 1315 (Government), 1321 (Fiction), 1323 (History), 1324 (True Crime), 1325 (Leisure), 1326 (Documentary)
+A single `bun:sqlite` database (default `./data/podr.db`, override with `DB_PATH`).
+Schema lives in [`migrations/0001_init.sql`](./migrations/0001_init.sql) and is
+applied automatically on boot by `src/db.ts`:
 
-### Podcast Detail
+- `stations_cache(query TEXT PK, results JSON, cached_at INTEGER)` — 1h TTL
+- `feed_cache(url TEXT PK, data JSON, cached_at INTEGER)` — TTL via `FEED_TTL_SECONDS`
+- `history(uri TEXT PK, title TEXT, last_played INTEGER, count INTEGER)`
+- `subscriptions(uri TEXT PK, title TEXT, artwork_url TEXT, added_at INTEGER)`
 
-```
-GET /podcast/<podcast_id>
-```
+No external DB. No Redis. In-process only.
 
-- `podcast_id` (required): iTunes podcast ID
+## Configuration
 
-Example: `/podcast/1535809341`
+See [`.env.example`](./.env.example):
 
-Returns podcast metadata and up to 20 recent episodes.
-
-### Health Checks
-
-```
-GET /health       # Basic health check (circuit breaker state, colo)
-GET /health/deep  # Deep health check with upstream connectivity test
-```
-
-### Trending & Suggestions (Feature-Flagged)
-
-```
-GET /trending?limit=<optional>              # Trending search queries (7d)
-GET /suggest?q=<prefix>&limit=<optional>    # Autocomplete suggestions
-```
-
-Requires `trendingQueries` feature flag to be enabled in KV.
-
-### OpenAPI Schema
-
-```
-GET /    # Returns OpenAPI 3.0 schema (when no query params)
-```
-
-## Cache Configuration
-
-| Endpoint         | TTL                | Stale Tolerance |
-| ---------------- | ------------------ | --------------- |
-| Schema           | 1 year (immutable) | N/A             |
-| Search           | 24 hours           | 24 hours        |
-| Top Podcasts     | 2 hours            | 24 hours        |
-| Podcast Detail   | 4 hours            | 24 hours        |
-| Trending/Suggest | 5 minutes          | N/A             |
-
-## Feature Flags
-
-Controlled via KV namespace `FLAGS`:
-
-| Flag               | Description                             | Default |
-| ------------------ | --------------------------------------- | ------- |
-| `trendingQueries`  | Enable /trending and /suggest endpoints | false   |
-| `semanticSearch`   | Enable /semantic-search endpoint        | false   |
-| `podcastSummaries` | Enable RSS summaries on /podcast        | false   |
-| `podcastIndex`     | Use Podcast Index API instead of iTunes | false   |
-| `analyticsExport`  | Export events to R2 data lake           | false   |
-
-Set flags: `wrangler kv:key put --binding FLAGS "flag:trendingQueries" "true"`
+| Variable               | Default                              | Purpose                      |
+| ---------------------- | ------------------------------------ | ---------------------------- |
+| `PORT`                 | `3000`                               | HTTP listen port             |
+| `DB_PATH`              | `./data/podr.db`                     | SQLite file location         |
+| `STATIONS_TTL_SECONDS` | `3600`                               | `/stations/search` cache TTL |
+| `FEED_TTL_SECONDS`     | `3600`                               | `/feed/:url` cache TTL       |
+| `RADIO_BROWSER_BASE`   | `https://de1.api.radio-browser.info` | radio-browser server         |
 
 ## Development
 
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) (see package.json for supported versions)
-- [Bun](https://bun.sh/)
-
-### Setup
+Requires [Bun](https://bun.sh/) ≥ 1.3.
 
 ```bash
-# Install dependencies
 bun install
-
-# Run development server
-bun run dev
-
-# Build for production
-bun run build
-```
-
-### Testing and Linting
-
-```bash
-# Run tests
-bun run test
-
-# Watch mode for tests
-bun run test:watch
-
-# Lint code
+bun run dev      # hot-reload server on $PORT (default 3000)
+bun test
 bun run lint
-
-# Fix linting issues
-bun run lint:fix
-
-# Format code
 bun run format
+bun run build    # bundles to ./dist
 ```
 
-### Dev Container
+## Deploy
 
-This repository includes a dev container configuration for VS Code. To use it:
-
-1. Install the [Remote - Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) extension
-2. Open the repository in VS Code
-3. Click on the green icon in the bottom-left corner of VS Code
-4. Select "Reopen in Container"
-
-The dev container comes with all necessary dependencies pre-installed.
-
-### Deployment
-
-The project uses automated deployments via GitHub Actions. Pushes to the `main` branch automatically trigger deployment to Cloudflare Workers after all CI checks pass.
-
-#### Automated Deployment
-
-Deployments are automatically triggered on:
-
-- Pushes to the `main` branch
-- Manual workflow dispatch via GitHub UI
-
-The deployment workflow requires the following GitHub secrets to be configured:
-
-- `CLOUDFLARE_API_TOKEN`: Your Cloudflare API token with Workers deployment permissions
-- `CLOUDFLARE_ACCOUNT_ID`: Your Cloudflare account ID
-
-#### Manual Deployment
-
-You can also deploy manually from your local machine:
+The service is containerized — it runs as a long-lived process alongside the
+Android build pipeline, not serverlessly.
 
 ```bash
-# Deploy to Cloudflare Workers
-bun run deploy
+docker build -t podr-service .
+docker run --rm -p 3000:3000 -v $(pwd)/data:/app/data podr-service
 ```
 
-Note: Manual deployment requires Wrangler authentication via `wrangler login` or environment variables.
+The Dockerfile uses `oven/bun:1` and copies `src/`, `migrations/`, and
+production `node_modules` only. A `/health` HEALTHCHECK is wired up.
 
-### Secrets Configuration
+## License
 
-For Podcast Index API integration (optional):
-
-```bash
-wrangler secret put PODCAST_INDEX_KEY
-wrangler secret put PODCAST_INDEX_SECRET
-```
-
-Register at https://api.podcastindex.org/signup
-
-## Scheduled Tasks
-
-Cache pre-warming runs every 6 hours via cron trigger, warming cache for popular search terms: news, comedy, true crime, technology, business, health, sports, music, science, history.
+MIT — see [LICENSE](./LICENSE).
