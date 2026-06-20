@@ -46,7 +46,6 @@ jobs:
           bun.lock
           bunfig.toml
           tsconfig.json
-          worker-configuration.d.ts
           eslint.config.js
           .prettierrc
           .prettierignore
@@ -60,11 +59,12 @@ jobs:
     - name: Install dependencies
       run: bun install --frozen-lockfile
 
-    - name: Lint and test
+    - name: Lint, test, and build
       run: |
         bun run lint
         bun run format:check
         bun run test
+        bun run build
 
     - name: Dependency review
       uses: actions/dependency-review-action@v5

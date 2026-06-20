@@ -2,27 +2,23 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug Jest Tests",
-      "type": "node",
+      "name": "Debug Bun Tests",
+      "type": "bun",
       "request": "launch",
-      "program": "${workspaceFolder}/node_modules/jest/bin/jest.js",
-      "args": ["--runInBand", "--no-cache"],
+      "program": "bun",
+      "runtime": "bun",
+      "args": ["test"],
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen",
-      "env": {
-        "NODE_OPTIONS": "--experimental-vm-modules"
-      }
+      "console": "integratedTerminal"
     },
     {
-      "name": "Debug Wrangler Dev",
-      "type": "node",
+      "name": "Debug Bun Server",
+      "type": "bun",
       "request": "launch",
-      "program": "${workspaceFolder}/node_modules/wrangler/bin/wrangler.js",
-      "args": ["dev"],
+      "runtime": "bun",
+      "program": "${workspaceFolder}/src/server.ts",
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen"
+      "console": "integratedTerminal"
     }
   ]
 }

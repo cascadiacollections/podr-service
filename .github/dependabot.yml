@@ -27,19 +27,11 @@ updates:
           - "@eslint/*"
           - "eslint*"
           - "prettier"
-          - "jest"
-          - "ts-*"
           - "typescript"
           - "typescript-eslint"
-          - "webpack*"
         update-types:
           - "minor"
           - "patch"
-      # Group Cloudflare-related dependencies
-      cloudflare:
-        patterns:
-          - "wrangler"
-          - "@cloudflare/*"
 
   # GitHub Actions - monthly (less frequent updates)
   - package-ecosystem: "github-actions"
