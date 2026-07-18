@@ -320,6 +320,24 @@ describe('/feed/:url', () => {
     expect(res.status).toBe(400);
   });
 
+  test('400 when feed URL targets localhost', async () => {
+    const db = makeDb();
+    const enc = encodeUrlToBase64Url('http://127.0.0.1/feed.xml');
+    const res = await handleRequest(db, new Request(`http://localhost/feed/${enc}`), mockFetch([]));
+    expect(res.status).toBe(400);
+  });
+
+  test('400 for episode lookup when feed URL is private network', async () => {
+    const db = makeDb();
+    const enc = encodeUrlToBase64Url('http://192.168.1.20/feed.xml');
+    const res = await handleRequest(
+      db,
+      new Request(`http://localhost/feed/${enc}/episodes/ep-1`),
+      mockFetch([])
+    );
+    expect(res.status).toBe(400);
+  });
+
   test('episode lookup by guid returns a single MediaItem', async () => {
     const db = makeDb();
     const f = mockFetch([

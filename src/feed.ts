@@ -79,6 +79,53 @@ interface ParsedFeed extends FeedResponse {
   episodes: (MediaItem & { guid?: string })[];
 }
 
+function isForbiddenIpv4(hostname: string): boolean {
+  const parts = hostname.split('.');
+  if (parts.length !== 4) return false;
+  const octets = parts.map((part) => Number(part));
+  if (octets.some((o) => !Number.isInteger(o) || o < 0 || o > 255)) return false;
+
+  const [a, b] = octets;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+function isForbiddenIpv6(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  if (normalized === '::1' || normalized === '::') return true;
+  if (normalized.startsWith('fe80:')) return true; // link-local
+  if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // unique local
+
+  // IPv4-mapped IPv6, e.g. ::ffff:127.0.0.1
+  const mappedIndex = normalized.lastIndexOf(':');
+  if (mappedIndex > -1) {
+    const tail = normalized.slice(mappedIndex + 1);
+    if (isForbiddenIpv4(tail)) return true;
+  }
+  return false;
+}
+
+function isForbiddenFeedTarget(feedUrl: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(feedUrl);
+  } catch {
+    return true;
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (!hostname) return true;
+  if (hostname === 'localhost' || hostname.endsWith('.localhost')) return true;
+  if (isForbiddenIpv4(hostname)) return true;
+  if (hostname.includes(':') && isForbiddenIpv6(hostname)) return true;
+  return false;
+}
+
 /**
  * Parse an RSS XML document into the canonical feed response shape.
  *
@@ -139,6 +186,10 @@ export async function loadFeed(
   feedUrl: string,
   fetchImpl: typeof fetch = fetch
 ): Promise<{ feed: ParsedFeed; cacheStatus: 'HIT' | 'MISS' } | { error: Response }> {
+  if (isForbiddenFeedTarget(feedUrl)) {
+    return { error: errorResponse(400, 'feed url must not target local or private networks') };
+  }
+
   const now = Math.floor(Date.now() / 1000);
 
   const cached = db
