@@ -62,10 +62,9 @@ export async function handleStationsSearch(
   const now = Math.floor(Date.now() / 1000);
 
   const cached = db
-    .query<
-      { results: string; cached_at: number },
-      [string]
-    >('SELECT results, cached_at FROM stations_cache WHERE query = ?')
+    .query<{ results: string; cached_at: number }, [string]>(
+      'SELECT results, cached_at FROM stations_cache WHERE query = ?'
+    )
     .get(key);
 
   if (cached && now - cached.cached_at < STATIONS_TTL_SECONDS) {

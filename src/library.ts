@@ -6,10 +6,9 @@ import type { HistoryRow, SubscriptionRow } from './types.ts';
  */
 export function handleHistoryGet(db: Database): Response {
   const rows = db
-    .query<
-      HistoryRow,
-      []
-    >('SELECT uri, title, last_played, count FROM history ORDER BY last_played DESC LIMIT 500')
+    .query<HistoryRow, []>(
+      'SELECT uri, title, last_played, count FROM history ORDER BY last_played DESC LIMIT 500'
+    )
     .all();
   return json(rows);
 }
@@ -46,10 +45,9 @@ export async function handleHistoryPost(db: Database, request: Request): Promise
  */
 export function handleSubscriptionsGet(db: Database): Response {
   const rows = db
-    .query<
-      SubscriptionRow,
-      []
-    >('SELECT uri, title, artwork_url, added_at FROM subscriptions ORDER BY added_at DESC')
+    .query<SubscriptionRow, []>(
+      'SELECT uri, title, artwork_url, added_at FROM subscriptions ORDER BY added_at DESC'
+    )
     .all();
   return json(rows);
 }
@@ -80,10 +78,9 @@ export async function handleSubscriptionsPost(db: Database, request: Request): P
   ).run(body.uri, title, artwork, now);
 
   const row = db
-    .query<
-      SubscriptionRow,
-      [string]
-    >('SELECT uri, title, artwork_url, added_at FROM subscriptions WHERE uri = ?')
+    .query<SubscriptionRow, [string]>(
+      'SELECT uri, title, artwork_url, added_at FROM subscriptions WHERE uri = ?'
+    )
     .get(body.uri);
   return json(row, {}, 201);
 }

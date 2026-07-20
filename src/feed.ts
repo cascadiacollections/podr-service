@@ -193,10 +193,9 @@ export async function loadFeed(
   const now = Math.floor(Date.now() / 1000);
 
   const cached = db
-    .query<
-      { data: string; cached_at: number },
-      [string]
-    >('SELECT data, cached_at FROM feed_cache WHERE url = ?')
+    .query<{ data: string; cached_at: number }, [string]>(
+      'SELECT data, cached_at FROM feed_cache WHERE url = ?'
+    )
     .get(feedUrl);
 
   if (cached && now - cached.cached_at < FEED_TTL_SECONDS) {
