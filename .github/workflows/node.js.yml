@@ -51,7 +51,7 @@ jobs:
       contents: write
     outputs:
       # SHA the ci job should test: the synced commit when one was pushed,
-      # otherwise empty so checkout falls back to its default ref.
+      # otherwise empty, and the ci job falls back to github.sha.
       sha: ${{ steps.sync.outputs.sha }}
     steps:
     - name: Checkout PR branch
