@@ -20,7 +20,7 @@
   "author": "Kevin T. Coughlin",
   "license": "MIT",
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20260731.1",
+    "@cloudflare/workers-types": "5.20260801.1",
     "@eslint/js": "^10.0.1",
     "@typescript-eslint/eslint-plugin": "8.65.0",
     "@typescript-eslint/parser": "8.65.0",
@@ -34,7 +34,7 @@
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
-    "wrangler": "^4.116.0"
+    "wrangler": "^4.118.0"
   },
   "overrides": {
     "js-yaml": "^4.1.1",
