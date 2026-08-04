@@ -101,7 +101,11 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v7
       with:
-        ref: ${{ needs.sync-lockfile.outputs.sha }}
+        # The synced commit when sync-lockfile pushed one, otherwise the SHA that
+        # triggered this run. github.sha is already the merge commit on
+        # pull_request, so the fallback keeps testing the merge with main rather
+        # than the branch head, and pins an exact commit instead of a moving ref.
+        ref: ${{ needs.sync-lockfile.outputs.sha || github.sha }}
         sparse-checkout: |
           src
           __tests__
