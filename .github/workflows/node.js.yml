@@ -24,6 +24,7 @@ concurrency:
 
 # COGS optimizations:
 # - Single job (dependency-review merged) saves runner startup overhead
+#   (sync-lockfile is a second job, but it only runs on Dependabot PRs)
 # - Path filters skip CI for docs/config-only changes
 # - Concurrency cancels superseded runs
 # - timeout-minutes caps runaway jobs
@@ -31,14 +32,76 @@ concurrency:
 # - bun cache via setup-bun
 
 jobs:
+  # Dependabot updates package.json but routinely leaves bun.lock untouched, which
+  # fails `bun install --frozen-lockfile` in both this workflow and deploy.yml -- so
+  # a package.json-only bump breaks the production deploy once merged, not just CI.
+  # This has been patched by hand repeatedly (#668, #670, #677, #680); regenerate the
+  # lockfile and push it to the PR branch instead.
+  #
+  # Kept as a separate job so `contents: write` is scoped to the lockfile push and
+  # never granted to the job that runs lint/test. The install here uses
+  # --ignore-scripts so no dependency lifecycle script executes while a write-capable
+  # token is present; lockfile resolution does not need them.
+  sync-lockfile:
+    name: Sync bun.lock
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      # SHA the ci job should test: the synced commit when one was pushed,
+      # otherwise empty so checkout falls back to its default ref.
+      sha: ${{ steps.sync.outputs.sha }}
+    steps:
+    - name: Checkout PR branch
+      uses: actions/checkout@v7
+      with:
+        # Check out the branch itself, not the merge commit, so the regenerated
+        # lockfile can be pushed back to the PR.
+        ref: ${{ github.head_ref }}
+        sparse-checkout: |
+          package.json
+          bun.lock
+          bunfig.toml
+        sparse-checkout-cone-mode: false
+
+    - name: Setup Bun
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: ${{ env.BUN_VERSION }}
+
+    - name: Regenerate and push bun.lock
+      id: sync
+      run: |
+        bun install --ignore-scripts
+        if git diff --quiet -- bun.lock; then
+          echo "bun.lock already matches package.json, nothing to push"
+          exit 0
+        fi
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add bun.lock
+        git commit -m "chore: sync bun.lock with dependency update"
+        git push origin HEAD:"$HEAD_REF"
+        echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        echo "Pushed regenerated bun.lock to $HEAD_REF"
+      env:
+        HEAD_REF: ${{ github.head_ref }}
+
   ci:
     name: Lint, Test & Build
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Waits for sync-lockfile so it tests the synced lockfile, but still runs when
+    # that job is skipped (every non-Dependabot PR).
+    needs: [sync-lockfile]
+    if: ${{ !cancelled() && needs.sync-lockfile.result != 'failure' }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v7
       with:
+        ref: ${{ needs.sync-lockfile.outputs.sha }}
         sparse-checkout: |
           src
           __tests__
