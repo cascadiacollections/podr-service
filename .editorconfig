@@ -7,7 +7,7 @@ charset = utf-8
 indent_style = space
 indent_size = 2
 
-[*.{js,ts,jsx,tsx,json}]
+[*.{json,jsonc,py,toml,yaml,yml}]
 trim_trailing_whitespace = true
 
 [*.md]

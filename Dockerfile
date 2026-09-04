@@ -1,10 +1,15 @@
-FROM golang:1.24-alpine AS build
+FROM python:3.13-slim
+COPY --from=ghcr.io/astral-sh/uv:0.10.9 /uv /usr/local/bin/uv
 WORKDIR /app
-COPY container_src/main.go .
-RUN CGO_ENABLED=0 GOOS=linux go build -o server main.go
-
-FROM scratch
-COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=build /app/server /server
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-default-groups --group proxy --no-install-project
+COPY container_src/main.py ./main.py
+USER 65532:65532
 EXPOSE 8080
-ENTRYPOINT ["/server"]
+CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]

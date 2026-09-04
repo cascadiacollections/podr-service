@@ -1,3 +1,31 @@
 [tools]
+python = "3.13"
+uv = "latest"
 node = "24"
-bun = "1.3.14"
+
+[tasks.dev]
+run = "uv run pywrangler dev"
+
+[tasks.local]
+run = "uv run uvicorn podr.app:app --app-dir src --reload"
+
+[tasks.test]
+run = "uv run pytest"
+
+[tasks.check]
+depends = ["lint", "format-check", "test", "build"]
+
+[tasks.lint]
+run = "uv run ruff check ."
+
+[tasks.format-check]
+run = "uv run ruff format --check ."
+
+[tasks.format]
+run = "uv run ruff format ."
+
+[tasks.build]
+run = "uv run pywrangler deploy --dry-run --outdir=dist --containers-rollout=none"
+
+[tasks.container]
+run = "docker build -t podr-proxy:dev ."
