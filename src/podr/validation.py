@@ -36,7 +36,9 @@ def search_limit(value: str | None) -> int:
 
 
 def genre_id(value: str | None) -> int:
-    result = parse_integer(value if value is not None else "-1")
+    if not value:
+        return -1
+    result = parse_integer(value)
     if result != -1 and result not in GENRES:
         genres = ", ".join(f"{key} ({name})" for key, name in GENRES.items())
         raise APIError(f"Invalid genre ID. Valid genres: {genres}")
