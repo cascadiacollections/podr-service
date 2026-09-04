@@ -1,19 +1,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "podr-service",
-  "main": "src/index.ts",
-  "tsconfig": "./tsconfig.json",
+  "main": "src/entry.py",
 
   // Modern Wrangler 4 configuration - use latest date for all stability improvements
-  "compatibility_date": "2026-03-17",
-  "compatibility_flags": [
-    "nodejs_compat",
-    "nodejs_als",
-    // Experimental: pass abort signals to subrequests (iTunes API)
-    "request_signal_passthrough"
-  ],
+  "compatibility_date": "2026-09-04",
+  "compatibility_flags": ["python_workers"],
 
-  // CPU limits - stay within free tier (10ms max)
+  // Preserve the existing CPU budget; measure Python usage before production rollout.
   "limits": {
     "cpu_ms": 10
   },
@@ -92,11 +86,6 @@
       "bucket_name": "podr-analytics-lake"
     }
   ],
-
-  // Workers AI for podcast summaries
-  "ai": {
-    "binding": "AI"
-  },
 
   // Podcast Index API credentials (set via wrangler secret put)
   // Register at https://api.podcastindex.org/signup

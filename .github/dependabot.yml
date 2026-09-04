@@ -1,72 +1,21 @@
 version: 2
 updates:
-  # NPM dependencies - weekly to reduce PR churn and CI costs
-  - package-ecosystem: "npm"
-    directory: "/"
+  - package-ecosystem: uv
+    directory: /
     schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "03:00"
-      timezone: "America/Los_Angeles"
-    assignees:
-      - "KevinTCoughlin"
-    labels:
-      - "dependencies"
-      - "npm"
-    commit-message:
-      prefix: "chore(deps)"
-      include: "scope"
-    open-pull-requests-limit: 5
-    versioning-strategy: increase
-    ignore:
-      # typescript-eslint hard-errors on TS 7.0 ("typescript-eslint does not
-      # support TS 7.0"), and 8.65.0 declares a peer range of >=4.8.4 <6.1.0,
-      # so a TS 7 major breaks `bun run lint` outright. Landed once in #666,
-      # reverted in #672, re-proposed in #676. Drop this ignore once
-      # typescript-eslint ships TS 7 support:
-      # https://github.com/typescript-eslint/typescript-eslint/issues/10940
-      - dependency-name: "typescript"
-        update-types:
-          - "version-update:semver-major"
+      interval: weekly
     groups:
-      # Group all dev dependencies together to reduce PRs
-      dev-dependencies:
-        patterns:
-          - "@types/*"
-          - "@typescript-eslint/*"
-          - "@eslint/*"
-          - "eslint*"
-          - "prettier"
-          - "jest"
-          - "ts-*"
-          - "typescript"
-          - "typescript-eslint"
-          - "webpack*"
-        update-types:
-          - "minor"
-          - "patch"
-      # Group Cloudflare-related dependencies
-      cloudflare:
-        patterns:
-          - "wrangler"
-          - "@cloudflare/*"
-
-  # GitHub Actions - monthly (less frequent updates)
-  - package-ecosystem: "github-actions"
-    directory: "/"
+      python:
+        patterns: ['*']
+        update-types: [minor, patch]
+  - package-ecosystem: docker
+    directory: /
     schedule:
-      interval: "monthly"
-    assignees:
-      - "KevinTCoughlin"
-    labels:
-      - "dependencies"
-      - "github-actions"
-    commit-message:
-      prefix: "chore(deps)"
-      include: "scope"
-    open-pull-requests-limit: 3
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
     groups:
-      # Group all GitHub Actions together
       actions:
-        patterns:
-          - "*"
+        patterns: ['*']
