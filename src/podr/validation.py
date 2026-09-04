@@ -36,7 +36,7 @@ def search_limit(value: str | None) -> int:
 
 
 def genre_id(value: str | None) -> int:
-    if not value:
+    if not value or not value.strip():
         return -1
     result = parse_integer(value)
     if result != -1 and result not in GENRES:

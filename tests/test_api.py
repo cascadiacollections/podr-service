@@ -85,6 +85,16 @@ async def test_top_genres(harness, genre):
     assert f"/genre={genre}/json" in str(harness.upstream.call_args.args[0].url)
 
 
+@pytest.mark.parametrize("blank_genre", ["", "   "])
+async def test_top_empty_genre(harness, blank_genre):
+    payload = {"feed": {"entry": [{"id": "42"}]}}
+    harness.upstream.return_value = httpx.Response(200, json=payload)
+    response = await harness.client.get("/", params={"q": "toppodcasts", "genre": blank_genre})
+    assert response.json() == payload
+    assert response.headers["cache-control"] == "public, max-age=7200"
+    assert "/genre=" not in str(harness.upstream.call_args.args[0].url)
+
+
 async def test_rate_limit_and_health_exemption(harness):
     harness.env.RATE_LIMITER = SimpleNamespace(limit=AsyncMock(return_value={"success": False}))
     for path in ["/", "/?q=test", "/podcast/42", "/related?id=42", "/trending"]:
