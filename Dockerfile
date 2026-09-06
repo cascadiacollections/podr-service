@@ -16,7 +16,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY container_src/main.py ./main.py
 # Fail the build, not the deploy, when the interpreter and the locked
 # dependencies are installable but mutually incompatible at import time.
-RUN python -c "import main; assert main.app"
+# Not an assert: those are stripped under -O, which would silently void the check.
+RUN python -c "import main; raise SystemExit(0 if main.app else 'proxy app failed to initialize')"
 USER 65532:65532
 EXPOSE 8080
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
