@@ -12,6 +12,15 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # The base image's Python is coupled to requires-python in pyproject.toml
+      # and uv.lock. Bumping the tag alone is a no-op at best: uv sync --frozen
+      # obeys requires-python, so it either fails the build or quietly installs
+      # a managed interpreter and ignores the image's. Move all three together.
+      - dependency-name: python
+        update-types:
+          - version-update:semver-major
+          - version-update:semver-minor
   - package-ecosystem: github-actions
     directory: /
     schedule:
