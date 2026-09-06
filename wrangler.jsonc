@@ -1,5 +1,5 @@
 {
-  "$schema": "https://unpkg.com/wrangler/config-schema.json",
+  "$schema": "https://unpkg.com/wrangler@4/config-schema.json",
   "name": "podr-service",
   "main": "src/entry.py",
 
