@@ -2,7 +2,7 @@
 name = "podr-service"
 version = "1.0.0"
 description = "Podr's FastAPI service on Cloudflare Workers"
-requires-python = ">=3.13,<3.14"
+requires-python = ">=3.13,<3.15"
 dependencies = ["fastapi>=0.115,<1", "httpx>=0.28,<1"]
 
 [dependency-groups]
