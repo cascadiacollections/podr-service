@@ -137,6 +137,16 @@ CI runs lint, formatting, tests, Worker dry-run packaging and a container build.
 Successful CI for a push to main triggers deployment of that exact commit. Configure
 `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` in GitHub secrets.
 
+GitHub Actions is the only supported deploy path. Cloudflare's built-in Git
+integration ("Workers Builds") must stay disconnected from this repository. It cannot
+build the project: `pywrangler` vendors the Python dependencies into the Worker
+bundle, so the `npx wrangler deploy` that Workers Builds runs by default cannot
+produce a working deployment, and reproducing the real build there would duplicate
+`deploy.yml` while skipping the CI gate that makes it safe. If a
+`Workers Builds: podr-service` check reappears on pull requests, the repository has
+been reconnected; disconnect it again under Workers & Pages > podr-service >
+Settings > Build rather than trying to make that check pass.
+
 ```sh
 uv run pywrangler deploy
 ```
