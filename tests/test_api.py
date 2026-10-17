@@ -22,6 +22,7 @@ async def test_openapi_and_docs(harness):
         "/trending",
         "/suggest",
         "/semantic-search",
+        "/feed",
     } <= schema["paths"].keys()
     assert "PodcastDetail" in schema["components"]["schemas"]
     assert response.headers["cache-control"] == "public, max-age=31536000, immutable"

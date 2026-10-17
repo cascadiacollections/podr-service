@@ -2,11 +2,14 @@
 
 ITUNES = "https://itunes.apple.com"
 PODCAST_INDEX = "https://api.podcastindex.org"
+RSS2JSON = "https://api.rss2json.com/v1/api.json"
 USER_AGENT = "Podr/1.0 (+https://www.podrapp.com) podcast-search"
 UPSTREAM_HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
 TTL_SEARCH = 86400
 TTL_TOP = 7200
 TTL_DETAIL = 14400
+TTL_FEED = 1800
+FEED_MAX_COUNT = 300
 TTL_SCHEMA = 31536000
 STALE_SECONDS = 86400
 EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"
