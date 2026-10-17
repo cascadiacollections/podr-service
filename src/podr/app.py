@@ -17,6 +17,7 @@ from podr.config import (
     ITUNES,
     SECURITY_HEADERS,
     TTL_DETAIL,
+    TTL_FEED,
     TTL_SCHEMA,
     TTL_SEARCH,
     TTL_TOP,
@@ -36,6 +37,8 @@ from podr.services import Podcasts
 from podr.validation import (
     APIError,
     clamped_limit,
+    feed_count,
+    feed_url,
     genre_id,
     parse_integer,
     podcast_id,
@@ -226,6 +229,28 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         data, hit = await service(request).related(podcast_id(id), clamped_limit(limit, 10, 20))
         record(request, "related", hit, len(data["related"]))
         return api_response(data, TTL_DETAIL, hit)
+
+    @app.get(
+        "/feed",
+        responses={
+            200: {"description": "The rss2json envelope: status, feed and items"},
+            400: {"description": "Missing or invalid rss_url"},
+            502: {"description": "rss2json could not convert the feed"},
+        },
+        operation_id="feed",
+    )
+    async def feed(request: Request, rss_url: str | None = None, count: Limit = None):
+        size = feed_count(count)
+        response, hit = await service(request).feed(feed_url(rss_url), size)
+        record(request, "feed", hit, limit=size)
+        return Response(
+            response.body,
+            media_type="application/json;charset=UTF-8",
+            headers={
+                "Cache-Control": f"public, max-age={TTL_FEED}",
+                "X-Cache": "HIT" if hit else "MISS",
+            },
+        )
 
     async def require_flag(request, flag):
         if not await service(request).runtime.flag(flag):

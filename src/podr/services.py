@@ -6,7 +6,7 @@ import logging
 import re
 import time
 from datetime import UTC, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from podr.analytics import Analytics, now_iso
 from podr.cache import CachedUpstream, CircuitBreaker
@@ -15,12 +15,15 @@ from podr.config import (
     GENRES,
     ITUNES,
     PODCAST_INDEX,
+    RSS2JSON,
+    STALE_SECONDS,
     TTL_DETAIL,
+    TTL_FEED,
     TTL_SEARCH,
     TTL_TOP,
     WARM_QUERIES,
 )
-from podr.runtime import Runtime
+from podr.runtime import CacheEntry, FetchResult, Runtime
 from podr.validation import APIError
 
 logger = logging.getLogger("podr")
@@ -132,6 +135,52 @@ class Podcasts:
         except Exception:
             logger.warning("RSS description unavailable", exc_info=True)
         return None
+
+    async def feed(self, rss_url: str, count: int) -> tuple[FetchResult, bool]:
+        """Convert an RSS feed to JSON through rss2json, holding the API key here.
+
+        This deliberately skips CachedUpstream: the feed URL is caller-supplied,
+        and rss2json answers a bad or not-yet-processed feed with a 4xx/5xx, so
+        sharing the circuit breaker would let a handful of bad URLs take every
+        feed (and iTunes) down. Errors are passed through instead, a stale copy
+        is served when rss2json fails, and the body is returned unparsed to stay
+        inside the Worker's CPU budget.
+        """
+        api_key = self.runtime.binding("RSS2JSON_API_KEY")
+        # Without a key rss2json rejects `count` outright.
+        params = {"rss_url": rss_url, **({"count": str(count)} if api_key else {})}
+        # The cache key leaves the API key out so it never lands in the cache.
+        cache_key = f"{RSS2JSON}?{urlencode(params)}"
+        upstream = f"{cache_key}&{urlencode({'api_key': api_key})}" if api_key else cache_key
+
+        entry = await self.runtime.cache_get(cache_key)
+        if entry and time.time() - entry.stored_at < TTL_FEED:
+            return entry.response, True
+        try:
+            response = await self.runtime.fetch(upstream, proxy=False)
+        except Exception:
+            logger.warning("rss2json unreachable", exc_info=True)
+            if entry:
+                return entry.response, True
+            raise APIError("Feed service unavailable", 502) from None
+        if response.status >= 400:
+            if entry:
+                return entry.response, True
+            raise APIError(self.rss2json_error(response), 502)
+        self.runtime.defer(
+            self.runtime.cache_put(
+                cache_key, CacheEntry(response, time.time(), TTL_FEED), TTL_FEED + STALE_SECONDS
+            )
+        )
+        return response, False
+
+    @staticmethod
+    def rss2json_error(response: FetchResult) -> str:
+        try:
+            message = response.json().get("message")
+        except (ValueError, AttributeError):
+            message = None
+        return f"Feed unavailable: {message or f'{response.status} {response.reason}'}"
 
     async def related(self, podcast_id, limit):
         response, hit = await self.upstream.get(f"{ITUNES}/lookup?id={podcast_id}", TTL_DETAIL)

@@ -1,8 +1,9 @@
 """Compatibility rules for the existing query-string API."""
 
 import re
+from urllib.parse import urlsplit
 
-from podr.config import GENRES
+from podr.config import FEED_MAX_COUNT, GENRES
 
 
 class APIError(Exception):
@@ -52,6 +53,21 @@ def podcast_id(value: str | None) -> int:
     if result is None or result <= 0:
         raise APIError("Invalid podcast ID")
     return result
+
+
+def feed_url(value: str | None) -> str:
+    if not value:
+        raise APIError("Missing required query parameter: rss_url")
+    if len(value) > 2048:
+        raise APIError("rss_url exceeds maximum length of 2048 characters")
+    parts = urlsplit(value)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise APIError("rss_url must be an absolute http(s) URL")
+    return value
+
+
+def feed_count(value: str | None) -> int:
+    return clamped_limit(value, FEED_MAX_COUNT, FEED_MAX_COUNT)
 
 
 def clamped_limit(value: str | None, default: int, maximum: int) -> int:
