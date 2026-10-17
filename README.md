@@ -4,7 +4,8 @@
 
 Python 3.13 and FastAPI power the API for https://www.podrapp.com/. The application
 runs on Cloudflare Python Workers; a Python container supplies upstream egress for
-iTunes and podcast RSS feeds.
+iTunes and podcast RSS feeds, and parses feeds to JSON for `/feed`, which needs more
+CPU than a Worker request allows.
 
 ## Development
 
@@ -52,7 +53,7 @@ Base URL: `https://podr-service.cascadiacollections.workers.dev`
 | `GET /?q=toppodcasts&limit=15&genre=1312` | Top podcasts, optional genre |
 | `GET /podcast/42?summary=true` | Metadata and recent episodes; optional RSS description |
 | `GET /related?id=42&limit=10` | Genre-related podcasts, limit 1–20 |
-| `GET /feed?rss_url=<feed>&count=300` | RSS feed as the rss2json `{status, feed, items}` envelope, count 1–300; cached 30 minutes |
+| `GET /feed?rss_url=<feed>&count=300` | RSS 2.0 or Atom feed as JSON `{status, feed, items}`, newest first, count 1–300; parsed in the container, cached 30 minutes |
 | `GET /trending?limit=10&country=US` | Seven-day trending queries, limit 1–50 |
 | `GET /suggest?q=py&limit=5` | Prefix suggestions, limit 1–10 |
 | `GET /semantic-search?q=python&limit=10` | Workers AI and Vectorize discovery |
@@ -126,16 +127,6 @@ Podcast Index credentials are Worker secrets:
 uv run pywrangler secret put PODCAST_INDEX_KEY
 uv run pywrangler secret put PODCAST_INDEX_SECRET
 ```
-
-`/feed` converts feeds through rss2json and holds its API key as a Worker secret, so
-the key never reaches a browser:
-
-```sh
-uv run pywrangler secret put RSS2JSON_API_KEY
-```
-
-Without it the route still works, but rss2json drops to its anonymous limits and
-ignores `count`, so long feeds come back truncated.
 
 For D1, apply **all** migrations before enabling `DB`. Migration 0003 preserves old
 rows and makes `(query_hash, date, country)` unique so country counts and atomic

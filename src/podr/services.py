@@ -12,10 +12,10 @@ from podr.analytics import Analytics, now_iso
 from podr.cache import CachedUpstream, CircuitBreaker
 from podr.config import (
     EMBEDDING_MODEL,
+    FEED_CACHE,
     GENRES,
     ITUNES,
     PODCAST_INDEX,
-    RSS2JSON,
     STALE_SECONDS,
     TTL_DETAIL,
     TTL_FEED,
@@ -137,36 +137,34 @@ class Podcasts:
         return None
 
     async def feed(self, rss_url: str, count: int) -> tuple[FetchResult, bool]:
-        """Convert an RSS feed to JSON through rss2json, holding the API key here.
+        """Convert a podcast feed to the client's JSON envelope.
 
-        This deliberately skips CachedUpstream: the feed URL is caller-supplied,
-        and rss2json answers a bad or not-yet-processed feed with a 4xx/5xx, so
-        sharing the circuit breaker would let a handful of bad URLs take every
-        feed (and iTunes) down. Errors are passed through instead, a stale copy
-        is served when rss2json fails, and the body is returned unparsed to stay
-        inside the Worker's CPU budget.
+        The container downloads and parses the feed (container_src/rss.py), since a
+        large feed takes far longer to parse than the Worker's CPU budget allows.
+        The JSON comes back unparsed for the same reason.
+
+        This deliberately skips CachedUpstream: the feed URL is caller-supplied, so
+        sharing its circuit breaker would let a handful of bad URLs take every feed
+        (and iTunes) down. Errors are passed through instead, and a stale copy is
+        served when the feed can't be fetched or parsed.
         """
-        api_key = self.runtime.binding("RSS2JSON_API_KEY")
-        # Without a key rss2json rejects `count` outright.
-        params = {"rss_url": rss_url, **({"count": str(count)} if api_key else {})}
-        # The cache key leaves the API key out so it never lands in the cache.
-        cache_key = f"{RSS2JSON}?{urlencode(params)}"
-        upstream = f"{cache_key}&{urlencode({'api_key': api_key})}" if api_key else cache_key
+        params = {"url": rss_url, "count": str(count)}
+        cache_key = f"{FEED_CACHE}?{urlencode(params)}"
 
         entry = await self.runtime.cache_get(cache_key)
         if entry and time.time() - entry.stored_at < TTL_FEED:
             return entry.response, True
         try:
-            response = await self.runtime.fetch(upstream, proxy=False)
+            response = await self.runtime.container_get("/feed", params)
         except Exception:
-            logger.warning("rss2json unreachable", exc_info=True)
+            logger.warning("Feed conversion unavailable", exc_info=True)
             if entry:
                 return entry.response, True
             raise APIError("Feed service unavailable", 502) from None
         if response.status >= 400:
             if entry:
                 return entry.response, True
-            raise APIError(self.rss2json_error(response), 502)
+            raise APIError(self.feed_error(response), 502)
         self.runtime.defer(
             self.runtime.cache_put(
                 cache_key, CacheEntry(response, time.time(), TTL_FEED), TTL_FEED + STALE_SECONDS
@@ -175,7 +173,7 @@ class Podcasts:
         return response, False
 
     @staticmethod
-    def rss2json_error(response: FetchResult) -> str:
+    def feed_error(response: FetchResult) -> str:
         try:
             message = response.json().get("message")
         except (ValueError, AttributeError):

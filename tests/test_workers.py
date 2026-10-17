@@ -65,6 +65,39 @@ async def test_sdk_fetch_uses_keywords_and_python_response(workers_stub):
     assert workers_stub.fetch.call_count == 1
 
 
+async def test_container_get_calls_the_container_route(workers_stub):
+    response = SimpleNamespace(
+        text=AsyncMock(return_value='{"status":"ok","items":[]}'),
+        status=200,
+        status_text="OK",
+        headers={},
+    )
+    calls = []
+
+    async def fetch(url, **options):
+        calls.append(url)
+        assert options["signal"] == "signal"
+        return response
+
+    namespace = SimpleNamespace(
+        idFromName=Mock(return_value="id"), get=Mock(return_value=SimpleNamespace(fetch=fetch))
+    )
+    runtime = CloudflareRuntime(SimpleNamespace(ITUNES_PROXY=namespace), None)
+
+    result = await runtime.container_get("/feed", {"url": "https://feeds/x.xml", "count": "5"})
+
+    assert result.json() == {"status": "ok", "items": []}
+    parsed = urlparse(calls[0])
+    assert (parsed.netloc, parsed.path) == ("container", "/feed")
+    assert parse_qs(parsed.query) == {"url": ["https://feeds/x.xml"], "count": ["5"]}
+    namespace.idFromName.assert_called_once_with("itunes-proxy")
+
+
+async def test_container_get_without_binding_fails_loudly(workers_stub):
+    with pytest.raises(RuntimeError, match="ITUNES_PROXY"):
+        await CloudflareRuntime(SimpleNamespace(), None).container_get("/feed", {})
+
+
 async def test_native_binding_values_and_background(workers_stub):
     runtime = CloudflareRuntime(SimpleNamespace(), None)
     assert runtime.native({"success": True}) == {"success": True}
