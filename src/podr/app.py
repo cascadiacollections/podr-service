@@ -233,9 +233,9 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
     @app.get(
         "/feed",
         responses={
-            200: {"description": "The rss2json envelope: status, feed and items"},
+            200: {"description": "The feed as JSON: status, feed and newest-first items"},
             400: {"description": "Missing or invalid rss_url"},
-            502: {"description": "rss2json could not convert the feed"},
+            502: {"description": "The feed could not be downloaded or parsed"},
         },
         operation_id="feed",
     )

@@ -2,7 +2,9 @@
 
 ITUNES = "https://itunes.apple.com"
 PODCAST_INDEX = "https://api.podcastindex.org"
-RSS2JSON = "https://api.rss2json.com/v1/api.json"
+# Cache API keys must be URLs. This origin is never requested; it only names the
+# converted-feed entries so they can't collide with cached upstream responses.
+FEED_CACHE = "https://feed-cache.podrapp.com/feed"
 USER_AGENT = "Podr/1.0 (+https://www.podrapp.com) podcast-search"
 UPSTREAM_HEADERS = {"User-Agent": USER_AGENT, "Accept": "application/json"}
 TTL_SEARCH = 86400

@@ -8,7 +8,7 @@ import time
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -82,6 +82,33 @@ class Runtime:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             return await consume(client)
 
+    async def container_get(self, path: str, params: dict) -> FetchResult:
+        """GET a route on the container app (container_src/main.py).
+
+        Locally the app runs in-process, so development and tests exercise the same
+        code the container deploys. The import is deferred because the Workers
+        bundle doesn't include container_src.
+        """
+        from container_src.main import app
+
+        async def call(upstream):
+            app.state.client = upstream
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="http://container"
+            ) as container:
+                response = await container.get(path, params=params)
+            return FetchResult(
+                response.text,
+                response.status_code,
+                response.reason_phrase,
+                response.headers.get("content-type", "application/json"),
+            )
+
+        if self.client is not None:
+            return await call(self.client)
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as upstream:
+            return await call(upstream)
+
     async def cache_get(self, key: str) -> CacheEntry | None:
         return self.cache.get(key)
 
@@ -147,13 +174,12 @@ class CloudflareRuntime(Runtime):
         from js import AbortSignal
         from workers import fetch
 
-        proxy_binding = self.binding("ITUNES_PROXY") if proxy else None
+        stub = self._proxy_stub() if proxy else None
         options = {
             "headers": {**UPSTREAM_HEADERS, **(headers or {})},
             "signal": AbortSignal.timeout(30_000),
         }
-        if proxy_binding is not None:
-            stub = proxy_binding.get(proxy_binding.idFromName("itunes-proxy"))
+        if stub is not None:
             response = await stub.fetch(f"http://container/?url={quote(url, safe='')}", **options)
         else:
             response = await fetch(url, **options)
@@ -177,6 +203,30 @@ class CloudflareRuntime(Runtime):
             body = await response.text()
         return FetchResult(
             body,
+            response.status,
+            response.status_text,
+            response.headers.get("content-type") or "application/json",
+        )
+
+    def _proxy_stub(self):
+        binding = self.binding("ITUNES_PROXY")
+        return binding.get(binding.idFromName("itunes-proxy")) if binding is not None else None
+
+    async def container_get(self, path: str, params: dict) -> FetchResult:
+        from js import AbortSignal
+
+        stub = self._proxy_stub()
+        if stub is None:
+            raise RuntimeError("The ITUNES_PROXY container binding is not configured")
+        # Longer than fetch()'s timeout: this covers a possible container cold start
+        # (up to about 15 s), the upstream download, and parsing.
+        response = await stub.fetch(
+            f"http://container{path}?{urlencode(params)}",
+            headers=UPSTREAM_HEADERS,
+            signal=AbortSignal.timeout(60_000),
+        )
+        return FetchResult(
+            await response.text(),
             response.status,
             response.status_text,
             response.headers.get("content-type") or "application/json",

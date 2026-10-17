@@ -13,11 +13,11 @@ ENV PATH="/app/.venv/bin:$PATH" \
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-default-groups --group proxy --no-install-project
-COPY container_src/main.py ./main.py
+COPY --chmod=0644 container_src/main.py container_src/rss.py ./
 # Fail the build, not the deploy, when the interpreter and the locked
 # dependencies are installable but mutually incompatible at import time.
 # Not an assert: those are stripped under -O, which would silently void the check.
-RUN python -c "import main; raise SystemExit(0 if main.app else 'proxy app failed to initialize')"
+RUN python -c "import main, rss; raise SystemExit(0 if main.app else 'proxy app failed to initialize')"
 USER 65532:65532
 EXPOSE 8080
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
