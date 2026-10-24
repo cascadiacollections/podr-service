@@ -1,6 +1,7 @@
 """Compatibility rules for the existing query-string API."""
 
 import re
+from typing import overload
 from urllib.parse import urlsplit
 
 from podr.config import FEED_MAX_COUNT, GENRES
@@ -12,6 +13,10 @@ class APIError(Exception):
         self.status = status
 
 
+@overload
+def parse_integer(value: str | None, default: int) -> int: ...
+@overload
+def parse_integer(value: str | None, default: None = None) -> int | None: ...
 def parse_integer(value: str | None, default: int | None = None) -> int | None:
     # Preserve JavaScript parseInt(..., 10), including inputs such as '15px'.
     match = re.match(r"^\s*([+-]?[0-9]+)", value or "")

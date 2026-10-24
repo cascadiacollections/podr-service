@@ -175,14 +175,14 @@ class CloudflareRuntime(Runtime):
         from workers import fetch
 
         stub = self._proxy_stub() if proxy else None
-        options = {
-            "headers": {**UPSTREAM_HEADERS, **(headers or {})},
-            "signal": AbortSignal.timeout(30_000),
-        }
+        headers = {**UPSTREAM_HEADERS, **(headers or {})}
+        signal = AbortSignal.timeout(30_000)
         if stub is not None:
-            response = await stub.fetch(f"http://container/?url={quote(url, safe='')}", **options)
+            response = await stub.fetch(
+                f"http://container/?url={quote(url, safe='')}", headers=headers, signal=signal
+            )
         else:
-            response = await fetch(url, **options)
+            response = await fetch(url, headers=headers, signal=signal)
         if header_only and response.body:
             reader = response.body.getReader()
             decoder = codecs.getincrementaldecoder("utf-8")("replace")
