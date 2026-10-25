@@ -30,8 +30,12 @@ jobs:
         run: |
           uv run ruff check .
           uv run ruff format --check .
+      # uv check runs the ty version locked in uv.lock (ty is in the default
+      # dev group; uv check ignores the lock for ty in other groups).
       - name: Type check
-        run: uv run ty check --output-format github
+        run: uv check --frozen --preview-features check-command
+        env:
+          TY_OUTPUT_FORMAT: github
       - name: Test
         run: uv run pytest
       - name: Package Worker
