@@ -3,6 +3,9 @@
   "python.testing.pytestEnabled": true,
   "python.testing.pytestArgs": ["tests"],
   "python.analysis.extraPaths": ["src"],
+  // ty finds the project environment through uv (experimental; needs uv
+  // 0.12.3+ and a trusted workspace). The extension turns off Pylance.
+  "ty.experimental.useUv": "on",
   "[python]": {
     "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,

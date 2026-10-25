@@ -1,5 +1,6 @@
 {
   "recommendations": [
+    "astral-sh.ty",
     "charliermarsh.ruff",
     "cloudflare.cloudflare-workers-bindings-extension",
     "EditorConfig.EditorConfig",
