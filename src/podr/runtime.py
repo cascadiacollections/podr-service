@@ -6,7 +6,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote, urlencode
 
@@ -15,6 +15,9 @@ import httpx
 from podr.config import UPSTREAM_HEADERS
 
 logger = logging.getLogger("podr")
+# The container's /feed route reports the feed host's validators and lifetime in
+# these (container_src/main.py); container_get keeps them, lowercased.
+UPSTREAM_META = ("x-upstream-etag", "x-upstream-last-modified", "x-upstream-max-age")
 
 
 @dataclass
@@ -23,6 +26,7 @@ class FetchResult:
     status: int = 200
     reason: str = "OK"
     content_type: str = "application/json"
+    headers: dict[str, str] = field(default_factory=dict)
 
     def json(self) -> Any:
         return json.loads(self.body)
@@ -33,6 +37,9 @@ class CacheEntry:
     response: FetchResult
     stored_at: float
     ttl: int
+    # The upstream feed's validators, for a conditional refetch.
+    etag: str = ""
+    last_modified: str = ""
 
 
 class Runtime:
@@ -82,7 +89,7 @@ class Runtime:
         async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
             return await consume(client)
 
-    async def container_get(self, path: str, params: dict) -> FetchResult:
+    async def container_get(self, path: str, params: dict, headers=None) -> FetchResult:
         """GET a route on the container app (container_src/main.py).
 
         Locally the app runs in-process, so development and tests exercise the same
@@ -96,12 +103,13 @@ class Runtime:
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="http://container"
             ) as container:
-                response = await container.get(path, params=params)
+                response = await container.get(path, params=params, headers=headers)
             return FetchResult(
                 response.text,
                 response.status_code,
                 response.reason_phrase,
                 response.headers.get("content-type", "application/json"),
+                {name: value for name in UPSTREAM_META if (value := response.headers.get(name))},
             )
 
         if self.client is not None:
@@ -212,7 +220,7 @@ class CloudflareRuntime(Runtime):
         binding = self.binding("ITUNES_PROXY")
         return binding.get(binding.idFromName("itunes-proxy")) if binding is not None else None
 
-    async def container_get(self, path: str, params: dict) -> FetchResult:
+    async def container_get(self, path: str, params: dict, headers=None) -> FetchResult:
         from js import AbortSignal
 
         stub = self._proxy_stub()
@@ -222,7 +230,7 @@ class CloudflareRuntime(Runtime):
         # (up to about 15 s), the upstream download, and parsing.
         response = await stub.fetch(
             f"http://container{path}?{urlencode(params)}",
-            headers=UPSTREAM_HEADERS,
+            headers={**UPSTREAM_HEADERS, **(headers or {})},
             signal=AbortSignal.timeout(60_000),
         )
         return FetchResult(
@@ -230,6 +238,7 @@ class CloudflareRuntime(Runtime):
             response.status,
             response.status_text,
             response.headers.get("content-type") or "application/json",
+            {name: value for name in UPSTREAM_META if (value := response.headers.get(name))},
         )
 
     async def cache_get(self, key: str) -> CacheEntry | None:
@@ -251,6 +260,8 @@ class CloudflareRuntime(Runtime):
             ),
             stored_at,
             ttl,
+            response.headers.get("x-podr-etag") or "",
+            response.headers.get("x-podr-last-modified") or "",
         )
 
     async def cache_put(self, key: str, entry: CacheEntry, retention: int):
@@ -266,6 +277,12 @@ class CloudflareRuntime(Runtime):
                         "Cache-Control": f"public, max-age={retention}",
                         "X-Podr-Stored-At": str(entry.stored_at),
                         "X-Podr-TTL": str(entry.ttl),
+                        **({"X-Podr-ETag": entry.etag} if entry.etag else {}),
+                        **(
+                            {"X-Podr-Last-Modified": entry.last_modified}
+                            if entry.last_modified
+                            else {}
+                        ),
                     },
                 }
             ),
