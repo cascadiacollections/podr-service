@@ -1,9 +1,11 @@
 import time
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from container_src.rss import DESCRIPTION_LIMIT, FeedError, parse_feed
 
+RFC_822 = "%a, %d %b %Y %H:%M:%S GMT"
 ITUNES_NS = 'xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"'
 
 
@@ -167,3 +169,82 @@ def test_large_feed_parses_quickly():
 
     assert len(data["items"]) == 300
     assert time.perf_counter() - started < 2
+
+
+def test_relative_urls_resolve_against_the_fetched_url():
+    xml = rss(
+        item(
+            "ep",
+            extra='<enclosure url="audio/ep.mp3" type="audio/mpeg"/>'
+            "<link>/episodes/ep</link>"
+            '<itunes:image href="../art/ep.jpg"/>',
+        )
+        + '<item><title>abs</title><enclosure url="https://cdn/abs.mp3"/></item>',
+        "<title>Show</title><link>/</link><image><url>art/show.png</url></image>",
+    )
+
+    data = parse_feed(xml, 10, "https://old.example/show.xml", "https://new.example/feeds/show")
+
+    assert data["feed"]["url"] == "https://old.example/show.xml"
+    assert data["feed"]["link"] == "https://new.example/"
+    assert data["feed"]["image"] == "https://new.example/feeds/art/show.png"
+    ep, absolute = data["items"]
+    assert ep["enclosure"]["link"] == "https://new.example/feeds/audio/ep.mp3"
+    assert ep["link"] == "https://new.example/episodes/ep"
+    assert ep["thumbnail"] == "https://new.example/art/ep.jpg"
+    assert absolute["enclosure"]["link"] == "https://cdn/abs.mp3"
+    # The guid fallback uses the resolved enclosure, so it is a usable URL too.
+    assert absolute["guid"] == "https://cdn/abs.mp3"
+
+
+def test_relative_urls_default_to_the_requested_url():
+    xml = rss('<item><title>a</title><enclosure url="a.mp3"/></item>')
+    data = parse_feed(xml, 10, "https://feeds.example/show/rss")
+    assert data["items"][0]["enclosure"]["link"] == "https://feeds.example/show/a.mp3"
+    assert parse_feed(xml, 10)["items"][0]["enclosure"]["link"] == "a.mp3"
+
+
+def test_atom_xml_base_is_inherited_and_nested():
+    xml = b"""<feed xmlns="http://www.w3.org/2005/Atom" xml:base="https://site.example/podcast/">
+      <title>Atom Show</title><link href="home"/><logo>img/logo.png</logo>
+      <entry xml:base="episodes/1/"><title>A</title><id>urn:a</id>
+        <link href="page"/>
+        <link rel="enclosure" href="a.mp3" type="audio/mpeg"/></entry>
+      <entry><title>B</title><id>urn:b</id>
+        <link rel="enclosure" xml:base="https://cdn.example/b/" href="b.mp3"/></entry>
+    </feed>"""
+
+    data = parse_feed(xml, 10, "https://feeds.example/atom.xml")
+
+    assert data["feed"]["link"] == "https://site.example/podcast/home"
+    assert data["feed"]["image"] == "https://site.example/podcast/img/logo.png"
+    links = {i["guid"]: (i["link"], i["enclosure"]["link"]) for i in data["items"]}
+    assert links["urn:a"] == (
+        "https://site.example/podcast/episodes/1/page",
+        "https://site.example/podcast/episodes/1/a.mp3",
+    )
+    assert links["urn:b"] == ("", "https://cdn.example/b/b.mp3")
+
+
+def test_relative_xml_base_resolves_against_the_fetched_url():
+    xml = b"""<feed xmlns="http://www.w3.org/2005/Atom" xml:base="media/">
+      <entry><id>urn:a</id><link rel="enclosure" href="a.mp3"/></entry></feed>"""
+    data = parse_feed(xml, 10, "https://feeds.example/show/atom.xml")
+    assert data["items"][0]["enclosure"]["link"] == "https://feeds.example/show/media/a.mp3"
+
+
+def test_future_dates_sort_as_now_but_keep_their_pubdate():
+    recent = (datetime.now(UTC) - timedelta(minutes=5)).strftime(RFC_822)
+    xml = rss(
+        item("older", "Mon, 01 Jan 2024 00:00:00 GMT")
+        + item("typo", "Sat, 01 Jan 2099 00:00:00 GMT")
+        + item("far-typo", "Fri, 01 Jan 2100 00:00:00 GMT")
+        + item("recent", recent)
+    )
+
+    items = parse_feed(xml, 10)["items"]
+
+    # Both future dates count as "now", so they tie and keep the publisher's order
+    # instead of ranking by how far ahead they claim to be.
+    assert [i["guid"] for i in items] == ["typo", "far-typo", "recent", "older"]
+    assert items[1]["pubDate"] == "2100-01-01T00:00:00Z"

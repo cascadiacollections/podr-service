@@ -1,5 +1,6 @@
 """FastAPI routes preserving Podr's existing wire format and query semantics."""
 
+import hashlib
 import json
 import logging
 import re
@@ -58,6 +59,20 @@ def api_response(data, ttl, hit=None, status=200):
     return JSONResponse(
         data, status_code=status, headers=headers, media_type="application/json;charset=UTF-8"
     )
+
+
+def weak_etag(body: str) -> str:
+    return f'W/"{hashlib.sha256(body.encode()).hexdigest()[:32]}"'
+
+
+def etag_matches(if_none_match: str | None, etag: str) -> bool:
+    """If-None-Match uses weak comparison, so W/ prefixes are ignored (RFC 9110 13.1.2)."""
+    if not if_none_match:
+        return False
+    if if_none_match.strip() == "*":
+        return True
+    opaque = etag.removeprefix("W/")
+    return any(tag.strip().removeprefix("W/") == opaque for tag in if_none_match.split(","))
 
 
 def create_app(runtime: Runtime | None = None) -> FastAPI:
@@ -234,6 +249,7 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         "/feed",
         responses={
             200: {"description": "The feed as JSON: status, feed and newest-first items"},
+            304: {"description": "If-None-Match matched the feed's ETag"},
             400: {"description": "Missing or invalid rss_url"},
             502: {"description": "The feed could not be downloaded or parsed"},
         },
@@ -243,14 +259,14 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         size = feed_count(count)
         response, hit = await service(request).feed(feed_url(rss_url), size)
         record(request, "feed", hit, limit=size)
-        return Response(
-            response.body,
-            media_type="application/json;charset=UTF-8",
-            headers={
-                "Cache-Control": f"public, max-age={TTL_FEED}",
-                "X-Cache": "HIT" if hit else "MISS",
-            },
-        )
+        headers = {
+            "Cache-Control": f"public, max-age={TTL_FEED}",
+            "ETag": weak_etag(response.body),
+            "X-Cache": "HIT" if hit else "MISS",
+        }
+        if etag_matches(request.headers.get("if-none-match"), headers["ETag"]):
+            return Response(status_code=304, headers=headers)
+        return Response(response.body, media_type="application/json;charset=UTF-8", headers=headers)
 
     async def require_flag(request, flag):
         if not await service(request).runtime.flag(flag):

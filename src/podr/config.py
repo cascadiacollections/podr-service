@@ -11,6 +11,8 @@ TTL_SEARCH = 86400
 TTL_TOP = 7200
 TTL_DETAIL = 14400
 TTL_FEED = 1800
+# A feed host's Cache-Control max-age can extend TTL_FEED, but no further than this.
+TTL_FEED_MAX = 86400
 FEED_MAX_COUNT = 300
 TTL_SCHEMA = 31536000
 STALE_SECONDS = 86400

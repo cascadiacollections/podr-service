@@ -53,7 +53,7 @@ Base URL: `https://podr-service.cascadiacollections.workers.dev`
 | `GET /?q=toppodcasts&limit=15&genre=1312` | Top podcasts, optional genre |
 | `GET /podcast/42?summary=true` | Metadata and recent episodes; optional RSS description |
 | `GET /related?id=42&limit=10` | Genre-related podcasts, limit 1–20 |
-| `GET /feed?rss_url=<feed>&count=300` | RSS 2.0 or Atom feed as JSON `{status, feed, items}`, newest first, count 1–300; parsed in the container, cached 30 minutes |
+| `GET /feed?rss_url=<feed>&count=300` | RSS 2.0 or Atom feed as JSON `{status, feed, items}`, newest first, count 1–300; parsed in the container, cached 30 minutes (longer if the feed's `max-age` says so, up to 24 hours) and revalidated with the feed's ETag/Last-Modified; weak `ETag` with `If-None-Match` → 304; `feed.redirectedUrl` appears when the feed moved permanently (301/308) |
 | `GET /trending?limit=10&country=US` | Seven-day trending queries, limit 1–50 |
 | `GET /suggest?q=py&limit=5` | Prefix suggestions, limit 1–10 |
 | `GET /semantic-search?q=python&limit=10` | Workers AI and Vectorize discovery |

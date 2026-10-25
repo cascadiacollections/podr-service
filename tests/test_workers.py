@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from podr.runtime import CloudflareRuntime
+from podr.runtime import CacheEntry, CloudflareRuntime, FetchResult
 
 
 @pytest.fixture
@@ -91,6 +91,71 @@ async def test_container_get_calls_the_container_route(workers_stub):
     assert (parsed.netloc, parsed.path) == ("container", "/feed")
     assert parse_qs(parsed.query) == {"url": ["https://feeds/x.xml"], "count": ["5"]}
     namespace.idFromName.assert_called_once_with("itunes-proxy")
+
+
+async def test_container_get_forwards_validators_and_keeps_upstream_meta(workers_stub):
+    response = SimpleNamespace(
+        text=AsyncMock(return_value=""),
+        status=304,
+        status_text="Not Modified",
+        headers={"x-upstream-etag": '"v1"', "x-upstream-max-age": "600", "server": "x"},
+    )
+    seen = {}
+
+    async def fetch(url, **options):
+        seen.update(options["headers"])
+        return response
+
+    namespace = SimpleNamespace(
+        idFromName=Mock(return_value="id"), get=Mock(return_value=SimpleNamespace(fetch=fetch))
+    )
+    runtime = CloudflareRuntime(SimpleNamespace(ITUNES_PROXY=namespace), None)
+
+    result = await runtime.container_get("/feed", {"url": "u"}, {"If-None-Match": '"v1"'})
+
+    assert seen["If-None-Match"] == '"v1"'
+    assert seen["User-Agent"].startswith("Podr/")
+    assert result.status == 304
+    assert result.headers == {"x-upstream-etag": '"v1"', "x-upstream-max-age": "600"}
+
+
+async def test_cache_round_trip_keeps_feed_validators(workers_stub, monkeypatch):
+    stored = {}
+
+    class CachedResponse:
+        def __init__(self, body, options):
+            self.body = body
+            self.status = options["status"]
+            self.statusText = "OK"
+            self.headers = {k.lower(): v for k, v in options["headers"].items()}
+
+        @classmethod
+        def new(cls, body, options):
+            return cls(body, options)
+
+        async def text(self):
+            return self.body
+
+    async def put(key, response):
+        stored[key] = response
+
+    async def match(key):
+        return stored.get(key)
+
+    js = sys.modules["js"]
+    monkeypatch.setattr(js, "Response", CachedResponse, raising=False)
+    monkeypatch.setattr(
+        js, "caches", SimpleNamespace(default=SimpleNamespace(put=put, match=match)), raising=False
+    )
+    runtime = CloudflareRuntime(SimpleNamespace(), None)
+
+    entry = CacheEntry(FetchResult("{}"), 1000.0, 7200, '"v1"', "Wed, 15 Jan 2026 12:00:00 GMT")
+    await runtime.cache_put("https://k/1", entry, 9000)
+    await runtime.cache_put("https://k/2", CacheEntry(FetchResult("{}"), 1000.0, 1800), 9000)
+
+    assert await runtime.cache_get("https://k/1") == entry
+    assert await runtime.cache_get("https://k/2") == CacheEntry(FetchResult("{}"), 1000.0, 1800)
+    assert "x-podr-etag" not in stored["https://k/2"].headers
 
 
 async def test_container_get_without_binding_fails_loudly(workers_stub):

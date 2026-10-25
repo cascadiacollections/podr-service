@@ -19,6 +19,7 @@ from podr.config import (
     STALE_SECONDS,
     TTL_DETAIL,
     TTL_FEED,
+    TTL_FEED_MAX,
     TTL_SEARCH,
     TTL_TOP,
     WARM_QUERIES,
@@ -147,30 +148,59 @@ class Podcasts:
         sharing its circuit breaker would let a handful of bad URLs take every feed
         (and iTunes) down. Errors are passed through instead, and a stale copy is
         served when the feed can't be fetched or parsed.
+
+        A copy stays fresh for TTL_FEED, or longer when the feed host's max-age
+        says so (up to TTL_FEED_MAX). Refetches are conditional on the cached
+        copy's validators, so an unchanged feed costs the host a 304 and the
+        container no parsing.
         """
         params = {"url": rss_url, "count": str(count)}
         cache_key = f"{FEED_CACHE}?{urlencode(params)}"
 
         entry = await self.runtime.cache_get(cache_key)
-        if entry and time.time() - entry.stored_at < TTL_FEED:
+        if entry and time.time() - entry.stored_at < (entry.ttl or TTL_FEED):
             return entry.response, True
+        conditional = {}
+        if entry and entry.etag:
+            conditional["If-None-Match"] = entry.etag
+        if entry and entry.last_modified:
+            conditional["If-Modified-Since"] = entry.last_modified
         try:
-            response = await self.runtime.container_get("/feed", params)
+            response = await self.runtime.container_get("/feed", params, conditional)
         except Exception:
             logger.warning("Feed conversion unavailable", exc_info=True)
             if entry:
                 return entry.response, True
             raise APIError("Feed service unavailable", 502) from None
-        if response.status >= 400:
+        if entry and response.status == 304:
+            # Unchanged upstream: keep the cached JSON and restart its freshness.
+            self.store_feed(cache_key, entry.response, response.headers, entry)
+            return entry.response, True
+        if response.status >= 300:
             if entry:
                 return entry.response, True
             raise APIError(self.feed_error(response), 502)
-        self.runtime.defer(
-            self.runtime.cache_put(
-                cache_key, CacheEntry(response, time.time(), TTL_FEED), TTL_FEED + STALE_SECONDS
-            )
-        )
+        self.store_feed(cache_key, response, response.headers)
         return response, False
+
+    def store_feed(self, cache_key, body: FetchResult, meta: dict, previous=None):
+        """Cache a converted feed with the upstream validators and lifetime in ``meta``.
+
+        A 304 may omit validators that still apply, so ``previous`` fills them in.
+        """
+        try:
+            max_age = int(meta.get("x-upstream-max-age", 0))
+        except ValueError:
+            max_age = 0
+        ttl = min(max(TTL_FEED, max_age), TTL_FEED_MAX)
+        entry = CacheEntry(
+            body,
+            time.time(),
+            ttl,
+            meta.get("x-upstream-etag") or (previous.etag if previous else ""),
+            meta.get("x-upstream-last-modified") or (previous.last_modified if previous else ""),
+        )
+        self.runtime.defer(self.runtime.cache_put(cache_key, entry, ttl + STALE_SECONDS))
 
     @staticmethod
     def feed_error(response: FetchResult) -> str:
