@@ -206,6 +206,8 @@ async def test_container_readiness_and_idle_shutdown(entry):
 async def test_scheduled_entrypoint(entry, monkeypatch):
     service = SimpleNamespace(warm=AsyncMock())
     monkeypatch.setattr(entry, "Podcasts", Mock(return_value=service))
-    worker = entry.Default(SimpleNamespace(), SimpleNamespace())
-    await worker.scheduled(SimpleNamespace())
+    env, ctx = SimpleNamespace(), SimpleNamespace()
+    worker = entry.Default(ctx, env)
+    # The positional arguments the Workers runtime passes to a cron handler.
+    await worker.scheduled(SimpleNamespace(cron="0 2 * * *", scheduledTime=0), env, ctx)
     service.warm.assert_awaited_once()

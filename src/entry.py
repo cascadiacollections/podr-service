@@ -28,7 +28,10 @@ class Default(WorkerEntrypoint):
 
         return await asgi.fetch(application, request, self.env, self.ctx)
 
-    async def scheduled(self, event):
+    async def scheduled(self, controller, env=None, ctx=None):
+        # The runtime calls scheduled(controller, env, ctx). The old
+        # scheduled(self, event) raised TypeError on every cron run before any
+        # of this executed. self.env and self.ctx carry the same bindings.
         runtime = CloudflareRuntime(self.env, self.ctx)
         await Podcasts(runtime, circuit).warm()
 
