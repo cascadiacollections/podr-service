@@ -79,13 +79,8 @@
   //   }
   // ],
 
-  // R2 bucket for analytics data lake
-  "r2_buckets": [
-    {
-      "binding": "ANALYTICS_LAKE",
-      "bucket_name": "podr-analytics-lake"
-    }
-  ],
+  // No R2: it was turned off on the account (2026-11-08) to cut costs. The
+  // analytics export to R2 is skipped whenever ANALYTICS_LAKE is unbound.
 
   // Podcast Index API credentials (set via wrangler secret put)
   // Register at https://api.podcastindex.org/signup

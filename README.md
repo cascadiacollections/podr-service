@@ -105,9 +105,10 @@ using batches of five with 500 ms between batches.
 
 ## Bindings and flags
 
-`wrangler.jsonc` preserves the existing KV, R2, Analytics Engine, rate limiter,
+`wrangler.jsonc` preserves the existing KV, Analytics Engine, rate limiter,
 Workers AI, and container bindings. D1 and Vectorize remain commented out until
-provisioned. Set KV keys named `flag:<name>` to the literal string `true`:
+provisioned. There is no R2 binding: R2 was turned off on the account in
+November 2026, so the `ANALYTICS_LAKE` event export below does not run. Set KV keys named `flag:<name>` to the literal string `true`:
 
 | Flag | Behavior | Default |
 | --- | --- | --- |
@@ -117,8 +118,8 @@ provisioned. Set KV keys named `flag:<name>` to the literal string `true`:
 | `podcastIndex` | Uses Podcast Index if both credentials exist | false |
 
 `enhancedCaching` and `analyticsExport` were unused flags in the previous code.
-R2 export continues whenever `ANALYTICS_LAKE` is configured, preserving actual
-production behavior. R2 events contain query text; SHA-256 query hashes support D1
+R2 export runs only when an `ANALYTICS_LAKE` bucket is bound, which it currently
+is not. R2 events contain query text; SHA-256 query hashes support D1
 aggregation but do not anonymize its stored normalized queries.
 
 Podcast Index credentials are Worker secrets:
