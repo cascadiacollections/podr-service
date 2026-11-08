@@ -96,7 +96,8 @@ class Runtime:
         code the container deploys. The import is deferred because the Workers
         bundle doesn't include container_src.
         """
-        from container_src.main import app
+        from container_src.egress import PublicOnlyTransport
+        from container_src.main import UPSTREAM_TIMEOUT, app
 
         async def call(upstream):
             app.state.client = upstream
@@ -114,7 +115,11 @@ class Runtime:
 
         if self.client is not None:
             return await call(self.client)
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as upstream:
+        async with httpx.AsyncClient(
+            transport=PublicOnlyTransport(httpx.AsyncHTTPTransport()),
+            timeout=UPSTREAM_TIMEOUT,
+            follow_redirects=True,
+        ) as upstream:
             return await call(upstream)
 
     async def cache_get(self, key: str) -> CacheEntry | None:

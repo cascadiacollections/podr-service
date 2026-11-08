@@ -14,8 +14,10 @@ from fastapi.responses import JSONResponse, PlainTextResponse, Response, Streami
 from starlette.background import BackgroundTask
 
 try:
+    from egress import BlockedDestination, PublicOnlyTransport
     from rss import FeedError, parse_feed
 except ImportError:  # Imported as container_src.main by tests and local development.
+    from container_src.egress import BlockedDestination, PublicOnlyTransport
     from container_src.rss import FeedError, parse_feed
 
 USER_AGENT = "Podr/1.0 (+https://www.podrapp.com) podcast-search"
@@ -26,12 +28,21 @@ FEED_ACCEPT = (
 FEED_MAX_BYTES = 25 * 1024 * 1024
 FEED_MAX_COUNT = 300
 PERMANENT_REDIRECTS = {301, 308}
+# Per connect/read/write; the whole feed download is also capped at FEED_DEADLINE so
+# a host that trickles bytes can't hold a request open. The Worker gives the
+# container 60 seconds, which has to cover a cold start and parsing too.
+UPSTREAM_TIMEOUT = httpx.Timeout(30, connect=10)
+FEED_DEADLINE = 40
+BLOCKED_MESSAGE = "URL is not allowed"
 _MAX_AGE = re.compile(r"(?:^|,)\s*(s-maxage|max-age)\s*=\s*\"?(\d+)", re.I)
 
 
 @asynccontextmanager
 async def lifespan(app):
-    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as client:
+    transport = PublicOnlyTransport(httpx.AsyncHTTPTransport())
+    async with httpx.AsyncClient(
+        transport=transport, timeout=UPSTREAM_TIMEOUT, follow_redirects=True
+    ) as client:
         app.state.client = client
         yield
 
@@ -110,17 +121,20 @@ async def feed(request: Request, url: str | None = None, count: str | None = Non
         if value := request.headers.get(name):
             headers[name] = value
     try:
-        async with client.stream("GET", target, headers=headers) as upstream:
-            if upstream.status_code == 304:
-                return Response(status_code=304, headers=upstream_headers(upstream))
-            if upstream.status_code >= 400:
-                return feed_error(f"Feed host returned HTTP {upstream.status_code}", 502)
-            body = bytearray()
-            async for chunk in upstream.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > FEED_MAX_BYTES:
-                    return feed_error("Feed is larger than 25 MB", 502)
-    except (httpx.HTTPError, httpx.InvalidURL):
+        async with asyncio.timeout(FEED_DEADLINE):
+            async with client.stream("GET", target, headers=headers) as upstream:
+                if upstream.status_code == 304:
+                    return Response(status_code=304, headers=upstream_headers(upstream))
+                if upstream.status_code >= 400:
+                    return feed_error(f"Feed host returned HTTP {upstream.status_code}", 502)
+                body = bytearray()
+                async for chunk in upstream.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > FEED_MAX_BYTES:
+                        return feed_error("Feed is larger than 25 MB", 502)
+    except BlockedDestination:
+        return feed_error(BLOCKED_MESSAGE, 400)
+    except (httpx.HTTPError, httpx.InvalidURL, TimeoutError):
         return feed_error("Could not download the feed", 502)
 
     try:
@@ -151,6 +165,8 @@ async def proxy(request: Request, url: str | None = None):
             ),
             stream=True,
         )
+    except BlockedDestination:
+        return PlainTextResponse(BLOCKED_MESSAGE, status_code=400)
     except (httpx.HTTPError, httpx.InvalidURL):
         return PlainTextResponse("Upstream request failed", status_code=502)
     return StreamingResponse(

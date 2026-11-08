@@ -249,3 +249,19 @@ async def test_feed_etag_answers_if_none_match_with_304(harness):
     # A different count is a different body, so a different ETag.
     other = await harness.client.get("/feed", params={"rss_url": FEED, "count": "1"})
     assert other.headers["etag"] != etag
+
+
+async def test_feed_blocked_destination_is_a_400_not_a_stale_copy(harness):
+    from container_src.egress import BlockedDestination
+
+    serve_feed(harness)
+    await harness.client.get("/feed", params={"rss_url": FEED})
+    await harness.runtime.drain()
+    for entry in harness.runtime.cache.values():
+        entry.stored_at -= 3600
+
+    harness.upstream.side_effect = BlockedDestination("Destination is not allowed")
+    response = await harness.client.get("/feed", params={"rss_url": FEED})
+
+    assert response.status_code == 400
+    assert "URL is not allowed" in response.text

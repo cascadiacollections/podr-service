@@ -78,6 +78,8 @@ binding is configured. Security and CORS headers are included on all responses.
 - `src/podr/runtime.py`: native Python and Cloudflare binding adapters.
 - `src/entry.py`: Workers ASGI entrypoint, daily cron and `ITunesProxy` Durable Object.
 - `container_src/main.py`: streaming FastAPI/httpx upstream proxy.
+- `container_src/egress.py`: keeps upstream requests (and every redirect hop) on public
+  addresses.
 
 The Durable Object uses Cloudflare's low-level container API to manage readiness,
 port 8080, and five-minute idle shutdown in Python. Its class name, instance name,
