@@ -172,6 +172,10 @@ class Podcasts:
             if entry:
                 return entry.response, True
             raise APIError("Feed service unavailable", 502) from None
+        if response.status == 400:
+            # The container refused the URL itself (e.g. a private address); a
+            # retry or a stale copy won't change that, so it's the caller's error.
+            raise APIError(self.feed_error(response), 400)
         if entry and response.status == 304:
             # Unchanged upstream: keep the cached JSON and restart its freshness.
             self.store_feed(cache_key, entry.response, response.headers, entry)
