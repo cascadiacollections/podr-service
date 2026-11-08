@@ -255,3 +255,22 @@ async def test_podcast_index(harness):
     assert request.url.host == "api.podcastindex.org"
     assert request.headers["x-auth-key"] == "key"
     assert len(request.headers["authorization"]) == 40
+
+
+@pytest.mark.parametrize(
+    "path", ["/podcast/9223372036854775808", "/related?id=99999999999999999999"]
+)
+async def test_out_of_range_podcast_id_is_rejected_before_itunes(harness, path):
+    # iTunes answers these with HTTP 400, which used to surface as a 500 and
+    # count against the circuit breaker.
+    response = await harness.client.get(path)
+    assert response.status_code == 400
+    assert response.text == "Invalid podcast ID"
+    harness.upstream.assert_not_called()
+    assert not harness.service.circuit.is_open()
+
+
+async def test_largest_podcast_id_still_reaches_itunes(harness):
+    await harness.client.get("/podcast/9223372036854775807")
+    harness.upstream.assert_called_once()
+    assert "id=9223372036854775807" in str(harness.upstream.call_args.args[0].url)

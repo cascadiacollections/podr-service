@@ -51,11 +51,17 @@ def genre_id(value: str | None) -> int:
     return result
 
 
+# The largest ID iTunes lookup accepts (2**63 - 1); one more returns HTTP 400.
+MAX_PODCAST_ID = 2**63 - 1
+
+
 def podcast_id(value: str | None) -> int:
     if not value:
         raise APIError("Missing required parameter: id")
     result = parse_integer(value)
-    if result is None or result <= 0:
+    # iTunes rejects IDs past the signed 64-bit range with HTTP 400, and an
+    # upstream 4xx counts as a circuit-breaker failure. Refuse them here.
+    if result is None or result <= 0 or result > MAX_PODCAST_ID:
         raise APIError("Invalid podcast ID")
     return result
 
