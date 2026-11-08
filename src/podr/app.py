@@ -75,6 +75,11 @@ def etag_matches(if_none_match: str | None, etag: str) -> bool:
     return any(tag.strip().removeprefix("W/") == opaque for tag in if_none_match.split(","))
 
 
+# Health checks also answer HEAD, for uptime monitors that probe with it. Every
+# other route stays GET-only, as the original Worker was.
+HEALTH_PATHS = frozenset({"/health", "/health/deep"})
+
+
 def create_app(runtime: Runtime | None = None) -> FastAPI:
     app = FastAPI(
         title="Podr's RESTful API",
@@ -98,16 +103,25 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         request_id = str(uuid.uuid4())
         svc = service(request)
         cf = request.scope.get("cf", {})
+        head = request.method == "HEAD" and request.url.path in HEALTH_PATHS
         try:
-            if request.method != "GET":
+            if head:
+                request.scope["method"] = "GET"
+            elif request.method != "GET":
                 raise APIError("Unsupported", 405)
-            if request.url.path not in {"/health", "/health/deep"}:
+            if request.url.path not in HEALTH_PATHS:
                 ip = request.headers.get("cf-connecting-ip") or request.headers.get(
                     "x-forwarded-for", "unknown"
                 )
                 if not await svc.runtime.rate_allowed(ip):
                     raise APIError("Rate limit exceeded", 429)
             response = await call_next(request)
+            if head:
+                # Run as GET, send its status and headers without the body.
+                async for _ in response.body_iterator:
+                    pass
+                headers = {k: v for k, v in response.headers.items() if k != "content-length"}
+                response = Response(status_code=response.status_code, headers=headers)
         except APIError as exc:
             response = PlainTextResponse(str(exc), status_code=exc.status)
         except Exception as exc:
@@ -116,7 +130,7 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
         response.headers.update({**SECURITY_HEADERS, **CORS_HEADERS})
         duration = (time.monotonic() - started) * 1000
         endpoint = getattr(request.state, "endpoint", "error")
-        if request.url.path not in {"/health", "/health/deep"}:
+        if request.url.path not in HEALTH_PATHS:
             svc.runtime.defer(
                 svc.analytics.record(
                     endpoint,

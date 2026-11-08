@@ -274,3 +274,21 @@ async def test_largest_podcast_id_still_reaches_itunes(harness):
     await harness.client.get("/podcast/9223372036854775807")
     harness.upstream.assert_called_once()
     assert "id=9223372036854775807" in str(harness.upstream.call_args.args[0].url)
+
+
+@pytest.mark.parametrize("path", ["/health", "/health/deep"])
+async def test_health_answers_head_without_a_body(harness, path):
+    get = await harness.client.get(path)
+    head = await harness.client.head(path)
+    assert head.status_code == get.status_code
+    assert head.content == b""
+    assert head.headers["content-type"] == get.headers["content-type"]
+    assert head.headers["x-content-type-options"] == "nosniff"
+    assert head.headers["access-control-allow-origin"] == "*"
+
+
+@pytest.mark.parametrize("path", ["/", "/?q=x", "/podcast/42", "/trending"])
+async def test_head_stays_unsupported_outside_health(harness, path):
+    response = await harness.client.head(path)
+    assert response.status_code == 405
+    harness.upstream.assert_not_called()
