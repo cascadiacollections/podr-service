@@ -42,6 +42,17 @@ docker build -t podr-proxy .
 The same commands are available as `mise run check`, `mise run dev`, `mise run local`,
 and `mise run container`.
 
+`mise run container` builds with Docker by default; set `CONTAINER_ENGINE` to use
+another OCI builder, e.g. Apple's [`container`](https://github.com/apple/container)
+CLI on macOS:
+
+```sh
+CONTAINER_ENGINE=container mise run container
+```
+
+That only covers building the proxy image. `pywrangler dev` (which starts the proxy
+container through Wrangler) and the devcontainer both still need a Docker daemon.
+
 ## API
 
 Base URL: `https://podr-service.cascadiacollections.workers.dev`
