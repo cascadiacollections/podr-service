@@ -28,4 +28,4 @@ run = "uv run ruff format ."
 run = "uv run pywrangler deploy --dry-run --outdir=dist --containers-rollout=none"
 
 [tasks.container]
-run = "docker build -t podr-proxy:dev ."
+run = "${CONTAINER_ENGINE:-docker} build -t podr-proxy:dev ."
