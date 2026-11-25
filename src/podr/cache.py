@@ -10,6 +10,10 @@ from podr.runtime import CacheEntry, Runtime
 logger = logging.getLogger("podr")
 
 
+class UpstreamError(RuntimeError):
+    """A podcast provider failed or is being rested; the message is safe to show the caller."""
+
+
 @dataclass
 class CircuitBreaker:
     failures: int = 0
@@ -45,7 +49,7 @@ class CachedUpstream:
         if self.circuit.is_open():
             if available:
                 return entry.response, True
-            raise RuntimeError("Service temporarily unavailable")
+            raise UpstreamError("Service temporarily unavailable")
         if available:
             if age >= ttl and url not in self.refreshing:
                 self.refreshing.add(url)
@@ -64,7 +68,7 @@ class CachedUpstream:
             )
             if response.status >= 400:
                 provider = "iTunes" if proxy else "Podcast Index"
-                raise RuntimeError(f"{provider} API error: {response.status} {response.reason}")
+                raise UpstreamError(f"{provider} API error: {response.status} {response.reason}")
         except Exception:
             self.circuit.failure()
             raise
