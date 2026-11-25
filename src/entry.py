@@ -10,7 +10,8 @@ from podr.cache import CircuitBreaker
 from podr.runtime import CloudflareRuntime
 from podr.services import Podcasts
 
-# Circuit state is intentionally per isolate, as in the previous Worker.
+# Per isolate, as in the previous Worker. iTunes and Podcast Index share it.
+# Publisher feeds must not move it (see Podcasts.rss_description).
 circuit = CircuitBreaker()
 
 
