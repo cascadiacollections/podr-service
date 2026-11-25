@@ -122,8 +122,11 @@ class Podcasts:
         return data, hit
 
     async def rss_description(self, url):
+        # The URL belongs to the publisher. Counting it on the shared breaker
+        # would let a few broken feeds rest iTunes and Podcast Index, and the
+        # failure is not an error from either API.
         try:
-            response, _ = await self.upstream.get(url, TTL_DETAIL, header_only=True)
+            response, _ = await self.upstream.get(url, TTL_DETAIL, header_only=True, breaker=False)
             channel = response.body.split("<item>", 1)[0]
             for tag in ("itunes:summary", "description"):
                 match = re.search(rf"<{tag}>(.*?)</{tag}>", channel, re.S)
