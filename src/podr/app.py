@@ -13,6 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from podr.analytics import now_iso
+from podr.cache import UpstreamError
 from podr.config import (
     CORS_HEADERS,
     ITUNES,
@@ -124,9 +125,15 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
                 response = Response(status_code=response.status_code, headers=headers)
         except APIError as exc:
             response = PlainTextResponse(str(exc), status_code=exc.status)
-        except Exception as exc:
+        except UpstreamError as exc:
             logger.exception("Request failed: %s", request_id)
-            response = PlainTextResponse(str(exc) or "Internal Server Error", status_code=500)
+            response = PlainTextResponse(str(exc), status_code=500)
+        except Exception:
+            # The text of an unexpected exception can name paths, hosts or
+            # bindings. It goes to the log, under the request ID, not to the
+            # caller.
+            logger.exception("Request failed: %s", request_id)
+            response = PlainTextResponse("Internal Server Error", status_code=500)
         response.headers.update({**SECURITY_HEADERS, **CORS_HEADERS})
         duration = (time.monotonic() - started) * 1000
         endpoint = getattr(request.state, "endpoint", "error")

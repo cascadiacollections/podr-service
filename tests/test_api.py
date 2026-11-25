@@ -292,3 +292,10 @@ async def test_head_stays_unsupported_outside_health(harness, path):
     response = await harness.client.head(path)
     assert response.status_code == 405
     harness.upstream.assert_not_called()
+
+
+async def test_unexpected_error_text_is_not_sent(harness):
+    harness.upstream.side_effect = OSError("/secret/path: permission denied")
+    response = await harness.client.get("/?q=test")
+    assert response.status_code == 500
+    assert response.text == "Internal Server Error"
