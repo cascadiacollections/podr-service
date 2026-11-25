@@ -1,6 +1,7 @@
 # Podr's RESTful API
 
 [![CI](https://github.com/cascadiacollections/podr-service/actions/workflows/python.yml/badge.svg)](https://github.com/cascadiacollections/podr-service/actions/workflows/python.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/cascadiacollections/podr-service/badge)](https://scorecard.dev/viewer/?uri=github.com/cascadiacollections/podr-service)
 
 Python 3.13 and FastAPI power the API for https://www.podrapp.com/. The application
 runs on Cloudflare Python Workers; a Python container supplies upstream egress for
